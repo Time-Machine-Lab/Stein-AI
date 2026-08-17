@@ -18,6 +18,7 @@ jobs:
     outputs:
       tag_name: ${{ steps.release_meta.outputs.tag_name }}
       is_stable: ${{ steps.release_meta.outputs.is_stable }}
+      image_namespace: ${{ steps.release_meta.outputs.image_namespace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,6 +40,12 @@ jobs:
             exit 1
           fi
           echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+          image_namespace=${GITHUB_REPOSITORY_OWNER,,}
+          if [[ ! "$image_namespace" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]]; then
+            echo "::error::Repository owner cannot be normalized to a valid container namespace."
+            exit 1
+          fi
+          echo "image_namespace=$image_namespace" >> "$GITHUB_OUTPUT"
           if [[ "$tag" == *-* ]]; then
             echo "is_stable=false" >> "$GITHUB_OUTPUT"
           else
@@ -125,7 +132,27 @@ jobs:
           - platform: linux/arm64
             runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
+    env:
+      REGISTRY: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && 'docker.io' || 'ghcr.io' }}
+      BACKEND_IMAGE: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && format('docker.io/{0}/multica-backend', secrets.DOCKER_USERNAME) || format('ghcr.io/{0}/multica-backend', needs.verify.outputs.image_namespace) }}
     steps:
+      - name: Validate Docker Hub credentials
+        if: github.repository == 'Time-Machine-Lab/Stein-AI'
+        shell: bash
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]] || {
+            echo "::error::DOCKER_USERNAME and DOCKER_PASSWORD are required for Stein-AI releases."
+            exit 1
+          }
+          [[ "$DOCKER_USERNAME" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || {
+            echo "::error::DOCKER_USERNAME is not a valid Docker Hub namespace."
+            exit 1
+          }
+
       - name: Prepare
         run: |
           platform=${{ matrix.platform }}
@@ -138,7 +165,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/multica-backend
+          images: ${{ env.BACKEND_IMAGE }}
           labels: |
             org.opencontainers.image.title=Multica Backend
             org.opencontainers.image.description=Multica self-hosted backend
@@ -146,12 +173,12 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
+      - name: Login to container registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_USERNAME || github.actor }}
+          password: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_PASSWORD || secrets.GITHUB_TOKEN }}
 
       - name: Build and push by digest
         id: build
@@ -167,7 +194,7 @@ jobs:
           build-args: |
             VERSION=${{ needs.verify.outputs.tag_name }}
             COMMIT=${{ github.sha }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/multica-backend,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.BACKEND_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         run: |
@@ -189,7 +216,27 @@ jobs:
     concurrency:
       group: release-docker-backend-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      REGISTRY: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && 'docker.io' || 'ghcr.io' }}
+      BACKEND_IMAGE: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && format('docker.io/{0}/multica-backend', secrets.DOCKER_USERNAME) || format('ghcr.io/{0}/multica-backend', needs.verify.outputs.image_namespace) }}
     steps:
+      - name: Validate Docker Hub credentials
+        if: github.repository == 'Time-Machine-Lab/Stein-AI'
+        shell: bash
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]] || {
+            echo "::error::DOCKER_USERNAME and DOCKER_PASSWORD are required for Stein-AI releases."
+            exit 1
+          }
+          [[ "$DOCKER_USERNAME" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || {
+            echo "::error::DOCKER_USERNAME is not a valid Docker Hub namespace."
+            exit 1
+          }
+
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
@@ -204,7 +251,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/multica-backend
+          images: ${{ env.BACKEND_IMAGE }}
           flavor: |
             latest=false
           tags: |
@@ -212,24 +259,31 @@ jobs:
             type=raw,value=${{ needs.verify.outputs.tag_name }}
             type=sha,prefix=sha-
 
-      - name: Login to GHCR
+      - name: Login to container registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_USERNAME || github.actor }}
+          password: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_PASSWORD || secrets.GITHUB_TOKEN }}
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/multica-backend@sha256:%s ' *)
+          set -Eeuo pipefail
+          tag_args=()
+          while IFS= read -r image_tag; do
+            tag_args+=(-t "$image_tag")
+          done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          image_sources=()
+          for digest in *; do
+            image_sources+=("$BACKEND_IMAGE@sha256:$digest")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${image_sources[@]}"
 
       - name: Inspect image
         run: |
           docker buildx imagetools inspect \
-            ghcr.io/${{ github.repository_owner }}/multica-backend:${{ steps.meta.outputs.version }}
+            "$BACKEND_IMAGE:${{ steps.meta.outputs.version }}"
 
   docker-web-build:
     needs: verify
@@ -242,7 +296,27 @@ jobs:
           - platform: linux/arm64
             runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
+    env:
+      REGISTRY: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && 'docker.io' || 'ghcr.io' }}
+      WEB_IMAGE: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && format('docker.io/{0}/multica-web', secrets.DOCKER_USERNAME) || format('ghcr.io/{0}/multica-web', needs.verify.outputs.image_namespace) }}
     steps:
+      - name: Validate Docker Hub credentials
+        if: github.repository == 'Time-Machine-Lab/Stein-AI'
+        shell: bash
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]] || {
+            echo "::error::DOCKER_USERNAME and DOCKER_PASSWORD are required for Stein-AI releases."
+            exit 1
+          }
+          [[ "$DOCKER_USERNAME" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || {
+            echo "::error::DOCKER_USERNAME is not a valid Docker Hub namespace."
+            exit 1
+          }
+
       - name: Prepare
         run: |
           platform=${{ matrix.platform }}
@@ -255,7 +329,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/multica-web
+          images: ${{ env.WEB_IMAGE }}
           labels: |
             org.opencontainers.image.title=Multica Web
             org.opencontainers.image.description=Multica self-hosted web frontend
@@ -263,12 +337,12 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
+      - name: Login to container registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_USERNAME || github.actor }}
+          password: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_PASSWORD || secrets.GITHUB_TOKEN }}
 
       - name: Build and push by digest
         id: build
@@ -284,7 +358,7 @@ jobs:
           build-args: |
             REMOTE_API_URL=http://backend:8080
             NEXT_PUBLIC_APP_VERSION=${{ needs.verify.outputs.tag_name }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/multica-web,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.WEB_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         run: |
@@ -306,7 +380,27 @@ jobs:
     concurrency:
       group: release-docker-web-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      REGISTRY: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && 'docker.io' || 'ghcr.io' }}
+      WEB_IMAGE: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && format('docker.io/{0}/multica-web', secrets.DOCKER_USERNAME) || format('ghcr.io/{0}/multica-web', needs.verify.outputs.image_namespace) }}
     steps:
+      - name: Validate Docker Hub credentials
+        if: github.repository == 'Time-Machine-Lab/Stein-AI'
+        shell: bash
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]] || {
+            echo "::error::DOCKER_USERNAME and DOCKER_PASSWORD are required for Stein-AI releases."
+            exit 1
+          }
+          [[ "$DOCKER_USERNAME" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || {
+            echo "::error::DOCKER_USERNAME is not a valid Docker Hub namespace."
+            exit 1
+          }
+
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
@@ -321,7 +415,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/multica-web
+          images: ${{ env.WEB_IMAGE }}
           flavor: |
             latest=false
           tags: |
@@ -329,24 +423,158 @@ jobs:
             type=raw,value=${{ needs.verify.outputs.tag_name }}
             type=sha,prefix=sha-
 
-      - name: Login to GHCR
+      - name: Login to container registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_USERNAME || github.actor }}
+          password: ${{ github.repository == 'Time-Machine-Lab/Stein-AI' && secrets.DOCKER_PASSWORD || secrets.GITHUB_TOKEN }}
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/multica-web@sha256:%s ' *)
+          set -Eeuo pipefail
+          tag_args=()
+          while IFS= read -r image_tag; do
+            tag_args+=(-t "$image_tag")
+          done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          image_sources=()
+          for digest in *; do
+            image_sources+=("$WEB_IMAGE@sha256:$digest")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${image_sources[@]}"
 
       - name: Inspect image
         run: |
           docker buildx imagetools inspect \
-            ghcr.io/${{ github.repository_owner }}/multica-web:${{ steps.meta.outputs.version }}
+            "$WEB_IMAGE:${{ steps.meta.outputs.version }}"
+
+  deploy-production:
+    needs: [verify, docker-backend-merge, docker-web-merge]
+    if: github.repository == 'Time-Machine-Lab/Stein-AI'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: stein-ai-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_DIR: /srv/stein-ai
+      EXPECTED_HOST_FINGERPRINT: SHA256:jmzl6o5sZWlfwF2Ncg6hrEf7lluI0iDfp7t1W2MJwRk
+      BACKEND_IMAGE: docker.io/${{ secrets.DOCKER_USERNAME }}/multica-backend
+      WEB_IMAGE: docker.io/${{ secrets.DOCKER_USERNAME }}/multica-web
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release commit is on main
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin main
+          release_commit=$(git rev-parse "${GITHUB_REF}^{commit}")
+          if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} does not point to a commit on main."
+            exit 1
+          fi
+
+      - name: Install SSH client dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Pin production SSH host key
+        shell: bash
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PWD: ${{ secrets.SERVER_PWD }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$SERVER_IP" && -n "$SERVER_USER" && -n "$SERVER_PWD" ]] || {
+            echo "::error::SERVER_IP, SERVER_USER, and SERVER_PWD are required."
+            exit 1
+          }
+          [[ "$SERVER_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+            echo "::error::SERVER_IP must be an IPv4 address."
+            exit 1
+          }
+          IFS=. read -r -a address_parts <<< "$SERVER_IP"
+          for part in "${address_parts[@]}"; do
+            if ((10#$part > 255)); then
+              echo "::error::SERVER_IP contains an invalid IPv4 octet."
+              exit 1
+            fi
+          done
+          [[ "$SERVER_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || {
+            echo "::error::SERVER_USER contains unsupported characters."
+            exit 1
+          }
+
+          install -d -m 0700 "$HOME/.ssh"
+          scan_file=$(mktemp)
+          trap 'rm -f -- "$scan_file"' EXIT
+          ssh-keyscan -T 10 -t ed25519 "$SERVER_IP" >"$scan_file"
+          actual_fingerprint=$(ssh-keygen -lf "$scan_file" -E sha256 | awk 'NR == 1 { print $2 }')
+          if [[ "$actual_fingerprint" != "$EXPECTED_HOST_FINGERPRINT" ]]; then
+            echo "::error::Production SSH host fingerprint did not match the pinned value."
+            exit 1
+          fi
+          install -m 0600 "$scan_file" "$HOME/.ssh/known_hosts"
+
+      - name: Sync deployment files and deploy exact release
+        shell: bash
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SSHPASS: ${{ secrets.SERVER_PWD }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          TAG_NAME: ${{ needs.verify.outputs.tag_name }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$SERVER_IP" && -n "$SERVER_USER" && -n "$SSHPASS" ]]
+          [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]] || {
+            echo "::error::DOCKER_USERNAME and DOCKER_PASSWORD are required for production deployment."
+            exit 1
+          }
+          [[ "$SERVER_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+          IFS=. read -r -a address_parts <<< "$SERVER_IP"
+          for part in "${address_parts[@]}"; do
+            ((10#$part <= 255))
+          done
+          [[ "$SERVER_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
+          [[ "$DOCKER_USERNAME" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || {
+            echo "::error::DOCKER_USERNAME is not a valid Docker Hub namespace."
+            exit 1
+          }
+          [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+
+          target="${SERVER_USER}@${SERVER_IP}"
+          suffix="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          remote_compose="${DEPLOY_DIR}/.docker-compose.selfhost.yml.${suffix}"
+          remote_script="${DEPLOY_DIR}/.deploy-selfhost.sh.${suffix}"
+          ssh_options=(
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o PasswordAuthentication=yes
+            -o PubkeyAuthentication=no
+            -o ConnectTimeout=15
+          )
+
+          sshpass -e ssh "${ssh_options[@]}" "$target" \
+            "install -d -m 0750 '$DEPLOY_DIR'"
+          sshpass -e scp "${ssh_options[@]}" docker-compose.selfhost.yml \
+            "$target:$remote_compose"
+          sshpass -e scp "${ssh_options[@]}" scripts/deploy-selfhost.sh \
+            "$target:$remote_script"
+          sshpass -e ssh "${ssh_options[@]}" "$target" \
+            "install -m 0644 '$remote_compose' '$DEPLOY_DIR/docker-compose.selfhost.yml' && install -m 0750 '$remote_script' '$DEPLOY_DIR/deploy-selfhost.sh' && rm -f -- '$remote_compose' '$remote_script'"
+
+          printf '%s\n' "$DOCKER_PASSWORD" | sshpass -e ssh "${ssh_options[@]}" "$target" \
+            "$DEPLOY_DIR/deploy-selfhost.sh" "$TAG_NAME" "$BACKEND_IMAGE" "$WEB_IMAGE" "$DOCKER_USERNAME"
 
   helm-chart:
     needs: [verify, docker-backend-merge, docker-web-merge]
@@ -357,7 +585,7 @@ jobs:
       cancel-in-progress: true
     env:
       CHART_DIR: deploy/helm/multica
-      OCI_REGISTRY: oci://ghcr.io/${{ github.repository_owner }}/charts
+      OCI_REGISTRY: oci://ghcr.io/${{ needs.verify.outputs.image_namespace }}/charts
     steps:
       - name: Checkout
         uses: actions/checkout@v4
