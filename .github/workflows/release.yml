@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Immutable release version (for example, v0.1.0)"
+        required: true
+        type: string
   push:
     tags:
       # GitHub Actions uses glob patterns here, not regex. Match versioned
@@ -25,14 +31,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate tag name
+      - name: Validate release version
         id: release_meta
         shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          echo "Triggered by tag: $tag"
+          set -Eeuo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_REPOSITORY" != "Time-Machine-Lab/Stein-AI" ]]; then
+              echo "::error::Manual releases are only supported for Time-Machine-Lab/Stein-AI."
+              exit 1
+            fi
+            if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "::error::Manual releases must run from the main branch."
+              exit 1
+            fi
+            tag="$REQUESTED_VERSION"
+            echo "Manually requested release: $tag"
+          else
+            tag="$GITHUB_REF_NAME"
+            echo "Triggered by tag: $tag"
+          fi
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Release tags must look like vX.Y.Z or vX.Y.Z-suffix; got '$tag'."
+            echo "::error::Release versions must look like vX.Y.Z or vX.Y.Z-suffix; got '$tag'."
             exit 1
           fi
           if [[ "$tag" == *-dirty* ]]; then
@@ -73,13 +95,15 @@ jobs:
       - name: Scan Go vulnerabilities
         # Fail closed unless an administrator scopes the documented emergency
         # override to this exact tag. See .github/RELEASING.md.
-        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG != github.ref_name }}
+        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG != steps.release_meta.outputs.tag_name }}
         working-directory: server
         run: go tool govulncheck ./...
 
       - name: Record emergency vulnerability-scan bypass
-        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG == github.ref_name }}
-        run: echo "::warning::govulncheck was explicitly skipped for ${GITHUB_REF_NAME}; see .github/RELEASING.md"
+        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG == steps.release_meta.outputs.tag_name }}
+        env:
+          TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
+        run: echo "::warning::govulncheck was explicitly skipped for ${TAG_NAME}; see .github/RELEASING.md"
 
   release:
     needs: verify
@@ -475,7 +499,7 @@ jobs:
           git fetch --no-tags origin main
           release_commit=$(git rev-parse "${GITHUB_REF}^{commit}")
           if ! git merge-base --is-ancestor "$release_commit" origin/main; then
-            echo "::error::Release tag ${GITHUB_REF_NAME} does not point to a commit on main."
+            echo "::error::Release source ${GITHUB_REF_NAME} does not point to a commit on main."
             exit 1
           fi
 

@@ -3,9 +3,13 @@
 ## Normal release
 
 Release from a reviewed commit on `main` by creating and pushing a new semantic
-version tag such as `v0.18.4`. The Release workflow intentionally has no manual
-trigger: a tag push is the only event that can publish binaries, Homebrew
-formulae, and container images.
+version tag such as `v0.18.4`. A tag push remains the only event that publishes
+the canonical upstream binaries and Homebrew formulae.
+
+The `Time-Machine-Lab/Stein-AI` fork can also run the Release workflow manually
+from the `main` branch. Select **Run workflow**, enter an unused semantic version
+such as `v0.1.0`, and start the run. Manual runs build the Docker Hub images and
+deploy that version, but they do not create a Git tag or GitHub Release.
 
 The verification job runs the Go tests and `govulncheck` before any publishing
 job starts. The vulnerability scan is fail-closed by default.
