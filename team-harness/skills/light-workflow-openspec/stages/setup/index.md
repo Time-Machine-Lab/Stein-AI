@@ -6,7 +6,7 @@
 
 ## 入口
 
-1. `Delivery Manager` 检查当前项目文件夹下的 `tml-docs/setup.yml`。
+1. `Delivery Manager` 检查当前项目根目录下的 `tml-docs/setup.yml`是否存在。
 2. 字段为`completed: true` 时跳过 Setup。
 3. 文件缺失或未完成时，`Delivery Manager` 创建 Setup Issue，并读取 [check.md](check.md)。
 4. 被指派的 Role 只读取与 `setup_id` 对应的阶段文件。
