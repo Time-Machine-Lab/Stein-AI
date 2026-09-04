@@ -27,6 +27,7 @@
 ## Issue 完成与集成
 
 - Task 完成时，如产生代码、文档或其他仓库修改，必须在当前 Task 对应的 worktree 分支完成 `commit` 并 `push`，不得只保留本地未提交修改；这样 `Delivery Manager` 才能获取并集成。
+- 任一 Workflow Issue 进入 `in_review` 后，统一由当前 Change 的 `Delivery Manager`（当前 `leader`）审核，并决定通过、返工或后续路由。
 - `Delivery Manager` 验收并将 Issue 标记为 `done` 前，必须检查当前 Issue 是否存在已打开的 worktree；只要存在，就必须将当前 Issue 下的全部 worktree 集成到规定分支，完成合并并推送。
 - Agent 不直接合并或推送 Change 分支；需要集成时，需要 `@` `Delivery Manager`。合并冲突或业务判断应该交回对应负责人处理。
 - 任何 Agent 将依赖 Issue 改为 `done` 前，必须检查该 Issue 的依赖登记；对每个登记的甲方 Issue，在其中写明结果并 `@` 对应甲方 Agent。甲方收到新 Task 后重新检查结果，满足条件后继续原目标。
