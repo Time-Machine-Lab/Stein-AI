@@ -19,7 +19,7 @@
 | 1. 检查交付条件 | 确认所有 Task 和 Issue 已完成，当前 Change 分支包含完整交付内容，可以开始交付。 | `Delivery Manager` |
 | 2. Archive Change | 使用 `openspec-archive-change` Archive 当前 OpenSpec Change，并选择生成规范和同步。 | `Delivery Manager` |
 | 3. 创建 PR | 按正常仓库流程创建最终 PR。 | `Delivery Manager` |
-| 4. 等待门禁并合并 | 读取 `tml-docs/setup.yml` 的 `pr_manual_review`：缺失或为 `off` 时等待自动门禁通过后直接合并；为 `on` 时阻塞当前任务并通知人类进行 PR 审核，审核和门禁均通过后再合并。 | `Delivery Manager` |
+| 4. 等待门禁并合并 | 读取 `tml-docs/setup.yml` 的 `pr_manual_review`：缺失或为 `off` 时等待自动门禁通过后直接合并；为 `on` 时阻塞当前任务，并在同一条评论中 `@mention` 具体审核人或负责恢复流程的 Agent，说明 PR、审核范围和恢复条件，审核和门禁均通过后再合并。 | `Delivery Manager` |
 
 ## Stage Completion Point
 
@@ -28,3 +28,7 @@ OpenSpec Change 已 Archive、PR 已合并且没有正在进行的 Issue 时，C
 ## 失败路由
 
 证据缺失或结论对应不同 Candidate Version 时，先补齐 QA 或 Product Acceptance；合并暴露产品或代码冲突时，交给对应负责人处理，不得直接 Archive。
+
+## Stage 收口
+
+完成本 Stage 不仅要求交付动作完成，还要求 Archive、PR、合并结果和状态记录已按公共退出门禁完成。由于本 Stage 由 `Delivery Manager` 负责，满足条件后直接收口，不等待自己审核；只有 `pr_manual_review=on` 明确要求人类 PR 审核时，才允许按 [exceptions.md](../policies/exceptions.md) 的人类阻塞规则暂停。

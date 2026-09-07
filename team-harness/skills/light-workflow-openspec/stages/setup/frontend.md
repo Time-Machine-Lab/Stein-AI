@@ -7,4 +7,4 @@
 3. 按已确定的技术栈，只初始化前端工程目录和必要配置骨架。
 4. 不实现任何产品功能、页面、交互或测试。
 5. 生成 `tml-docs/frontend-development.md`；涉及界面时同时生成 `tml-docs/design.md`，用于统一整个项目的设计系统和审美方向。
-6. 自行确认工程结构与文档一致后通知 Delivery Manager。
+6. 自行确认工程结构与文档一致后，在同一条完成评论中 `@mention` 具体的 Delivery Manager 成员账号，并提供文档位置、验证证据和下一动作。

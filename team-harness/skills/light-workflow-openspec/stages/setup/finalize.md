@@ -15,7 +15,7 @@
 
    `acceptance_strength` 只能是 `low`、`medium` 或 `high`；`pr_manual_review` 只能是 `on` 或 `off`。
 6. 关闭 Setup Issue。
-7. 自主创建下一个 Workflow Issue，指派 `Product Owner` 执行 `stage=goal`：
+7. 自主创建下一个 Workflow Issue，指派 `Product Owner` 执行 `stage=goal`，并在 Setup 完成评论中 `@mention` 具体的 Product Owner 成员账号，明确要求开始目标定义：
 
    ```text
    light-workflow-openspec mode=change stage=goal role="Product Owner"

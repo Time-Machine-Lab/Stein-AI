@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | 1. 明确需求 | 基于当前产品状态和相关信息，明确本次要解决的问题或下一步目标。 | `Product Owner` |
 | 2. 形成产品定义 | 至少说明问题或机会、期望目标、包含和排除范围、验收依据；其他内容按需补充。 | `Product Owner` |
-| 3. 提交结果 | 将结果写入当前 Issue，并通知 `Delivery Manager`。 | `Product Owner` |
+| 3. 提交结果 | 将结果写入当前 Issue，并在同一条评论中 `@mention` 具体的 `Delivery Manager` 成员账号，明确要求检查并推进。 | `Product Owner` |
 | 4. 检查需求 | 检查需求是否清晰、范围是否可拆分；不清晰时退回补充。 | `Delivery Manager` |
 | 5. 准备并推进 Stage | 需求清晰时创建以 Change 名称命名的 Change 集成分支，记录当前 `ref`，在 Change 根 Issue 中声明分支和 `ref`，完成本 Stage 并推进 `stage=proposal`。 | `Delivery Manager` |
 
@@ -30,3 +30,7 @@
 ## 失败路由
 
 产品含义或范围冲突交给 `Product Owner`。项目上下文缺失或请求过大时，按 [exceptions.md](../policies/exceptions.md) 处理。
+
+## Stage 收口
+
+完成本 Stage 不仅要求产品定义满足完成条件，还要求已按公共退出门禁完成 Handoff。`Delivery Manager` 只检查定义是否完整、证据是否齐全以及是否能够进入 `proposal`，通过后实际创建或触发下一 Stage。

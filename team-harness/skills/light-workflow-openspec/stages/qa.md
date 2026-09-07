@@ -11,7 +11,7 @@
 
 ## 负责人
 
-`Delivery Manager` 负责创建和分配 QA Issue、路由结果及本 Stage 完成判断；`QA Engineer` 负责执行测试并提供结论。
+`Delivery Manager` 负责创建和分配 QA Issue、路由结果及本 Stage 的轻量完成检查；`QA Engineer` 负责执行测试并提供结论。
 
 ## 执行
 
@@ -19,8 +19,8 @@
 | --- | --- | --- |
 | 1. 分配 QA 任务 | 基于当前 Change 明确测试范围和测试任务，分配给 `QA Engineer`；Issue 创建和路由遵循 [stage-issue-routing.md](../policies/stage-issue-routing.md)。 | `Delivery Manager` |
 | 2. 执行测试任务 | 读取当前 Workflow、产品定义、Proposal 和 QA Issue，基于 Change 分支 `ref` 工作，并使用 `openspec-apply-change` 完成分配的测试任务，记录可复现证据。 | `QA Engineer` |
-| 3. 提交测试结果 | 将每个测试任务的结果和证据写入 QA Issue，并通知 `Delivery Manager`。 | `QA Engineer` |
-| 4. 路由失败与返工 | `Delivery Manager` 分析失败结果：优先在原 QA Issue 中 `@` 对应负责人处理；实现问题交给对应开发 Agent，产品方向问题交给 `Product Owner`，缺少协作或资源时按公共依赖规则处理。只有没有对应 Issue 时才新建 Issue。修复并重新集成后，通知 `QA Engineer` 重新在当前Issue测试受影响任务。 | `Delivery Manager` 组织，相关 Agent 执行 |
+| 3. 提交测试结果 | 将每个测试任务的结果和证据写入 QA Issue，并在同一条评论中 `@mention` 具体的 `Delivery Manager` 成员账号，明确要求检查并推进。 | `QA Engineer` |
+| 4. 路由失败与返工 | `Delivery Manager` 分析失败结果：优先在原 QA Issue 中 `@mention` 对应具体负责人处理；实现问题交给对应开发 Agent，产品方向问题交给 `Product Owner`，缺少协作或资源时按公共依赖规则处理。只有没有对应 Issue 时才新建 Issue。修复并重新集成后，在同一条评论中 `@mention` 具体的 QA Engineer 成员账号，要求重新在当前 Issue 测试受影响任务。 | `Delivery Manager` 组织，相关 Agent 执行 |
 | 5. 确认完成 | 确认所有 QA 测试任务均已完成且全部通过；满足条件后完成本 Stage，并推进 `stage=acceptance`。 | `Delivery Manager` |
 
 ## 测试结果最低规范
@@ -42,3 +42,7 @@ QA 结果至少包含以下内容，其余内容由 `QA Engineer` 自行补充�
 ## 失败路由
 
 产品行为或范围问题交给 `Product Owner`；实现问题交给对应开发 Agent；Change 分支或集成问题交给 `Delivery Manager`。
+
+## Stage 收口
+
+完成本 Stage 不仅要求 QA 任务提交结论，还要求测试范围、环境、结果和证据满足最低规范，并已按公共退出门禁完成 Handoff。`Delivery Manager` 只检查结论和证据是否足以判断通过或返工，不重复执行 QA；通过后实际创建或触发 `stage=acceptance`。

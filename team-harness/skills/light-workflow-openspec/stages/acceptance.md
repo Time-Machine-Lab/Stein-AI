@@ -10,7 +10,7 @@
 
 ## 负责人
 
-`Product Owner` 负责 Product Acceptance 结论；`Delivery Manager` 负责是否跳过、Issue 路由、结果处理和本 Stage 完成判断。
+`Product Owner` 负责 Product Acceptance 结论；`Delivery Manager` 负责是否跳过、Issue 路由、结果处理和本 Stage 的轻量完成检查，不替代 `Product Owner` 做产品判断。
 
 ## 执行
 
@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | 1. 读取验收强度 | 读取 `tml-docs/setup.yml` 的 `acceptance_strength`：缺失、为空或为 `low` 时跳过 Product Acceptance；为 `medium` 或 `high` 时进入验收。 | `Delivery Manager` |
 | 2. 体验与判断 | `medium` 时快速体验当前 Change 版本并确认可用；`high` 时读取产品定义、Proposal 和验收依据，严格判断产品目标、产品品味和已确认范围是否达成。 | `Product Owner` |
-| 3. 提交结论 | 在当前 Product Acceptance Issue 中写明通过、原范围不通过或新增范围，并通知 `Delivery Manager`。 | `Product Owner` |
+| 3. 提交结论 | 在当前 Product Acceptance Issue 中写明通过、原范围不通过或新增范围，并在同一条评论中 `@mention` 具体的 `Delivery Manager` 成员账号，明确要求处理结论并推进。 | `Product Owner` |
 | 4. 处理结论 | 原范围不通过时，回到原 Issue `@` 对应负责人返工；发现新增范围时记录为新的 Change；通过时推进 `stage=delivery`。 | `Delivery Manager` |
 
 ## Stage Completion Point
@@ -36,3 +36,7 @@
 ## 失败路由
 
 原范围未满足时返回对应的开发和 QA 路径；出现新增产品范围时创建新的 Change，不扩大当前 Change。
+
+## Stage 收口
+
+完成本 Stage 不仅要求 `Product Owner` 已提交验收结论，还要求结论、依据和后续路由已按公共退出门禁记录。`Delivery Manager` 只检查结论是否明确并执行对应路由，不替代 `Product Owner` 做产品判断；通过后实际创建或触发 `stage=delivery`。
