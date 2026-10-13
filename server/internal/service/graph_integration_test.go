@@ -93,7 +93,7 @@ CREATE UNIQUE INDEX test_task_pending ON agent_task_queue(issue_id,agent_id) WHE
 	sort.Strings(files)
 	for _, file := range files {
 		number, _ := strconv.Atoi(strings.SplitN(filepath.Base(file), "_", 2)[0])
-		if number < 332 || number > 356 {
+		if number < 332 || number > 357 {
 			continue
 		}
 		data, e := os.ReadFile(file)

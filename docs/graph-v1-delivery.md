@@ -34,7 +34,7 @@ Agent Skill、显式 Agent/工作区 MCP 和适用插件 Skill 在发布时冻�
 
 ## 部署接入
 
-1. 使用现有迁移机制应用 **332–356**；并发索引各有独立迁移，没有增加外键或级联删除。
+1. 使用现有迁移机制应用 **332–357**；并发索引各有独立迁移，没有增加外键或级联删除。Docker / Compose / Helm 的容器启动入口，以及 `make dev` / `make start`，都会先自动运行迁移再启动 server；仅直接运行 server 二进制时需要单独执行迁移。迁移失败会阻止标准启动流程继续。
 2. 一起更新 server、daemon 和 CLI。daemon 需报告 `graph-execution-v1`，CLI 需报告 `graph-node-submit-v1`；缺少能力的旧版本会被拒绝执行 Graph 或提交 Graph 结果，普通任务不受此能力门槛限制。
 3. 发布模板，选择具备能力的 Codex runtime，启动运行。协调器随服务启动，从数据库恢复工作。
 
@@ -53,6 +53,8 @@ Agent Skill、显式 Agent/工作区 MCP 和适用插件 Skill 在发布时冻�
 
 推送前审查发现并修复了一个实际回归：旧任务所有权触发器已持有 Issue `KEY SHARE`，新增触发器再升级 `FOR UPDATE` 会使同一 Issue 的普通任务并发入队死锁。回归测试先稳定复现 PostgreSQL `40P01`，再将新增锁调整为兼容的 `FOR NO KEY UPDATE`，同时保留与 Graph 接管的互斥。测试使用真实旧迁移 284 的锁函数。
 
+Linux CI 随后暴露了子任务创建和更换父任务的相关问题：旧订阅事务通过已有外键持有父任务 `KEY SHARE`，Graph 父任务保护锁会使创建流程等待，导致原有订阅并发测试超时。迁移 **357** 将这两处锁调整为 `FOR NO KEY UPDATE`，保留与 Graph 接管的互斥，同时兼容订阅事务。迁移 354 保持原样，已经应用过它的数据库可通过正常启动迁移获得修复。两个有界回归先复现阻塞，再验证修复；完整历史迁移及原 `cmd/server` 测试包在隔离 PostgreSQL 数据库通过，原订阅测试未被修改。
+
 数据库回归覆盖两个普通任务并发入队、评论合并及登记、领取、开始、失败、重试及续接、完成、Issue 与子 Issue 编辑、普通附件删除、无 Graph Run 的工作区清理。前端全量 core 测试和相关 Issue 操作测试通过，普通 daemon 完成、失败、取消、网络重试、会话恢复和动态 Skill 流程通过。
 
 检查未发现剩余的明确功能回归，但不是零开销保证：普通接口增加少量 Graph 归属查询，任务入队增加行锁。必须先执行迁移再启动新 server；关闭 Graph 功能开关也不能替代数据库迁移。尚未进行生产负载压测。
@@ -69,12 +71,14 @@ Agent Skill、显式 Agent/工作区 MCP 和适用插件 Skill 在发布时冻�
 
 推送前复核：core 125 文件、1,424 测试通过；views 4,239 测试通过，另有一个未修改文件的 Windows 路径分隔符断言失败。Web、Desktop renderer、views 类型检查通过，改动前端文件 ESLint 无错误，仅保留一条既有依赖警告。daemon/execenv 扩展检查中的 9 项 Windows 权限、junction 和文件模式失败，均在未修改的基线提交上复现。Linux CI 将继续执行全量检查，Graph PostgreSQL 测试使用隔离 schema。
 
+首次 Linux CI 的前端构建、前端测试和 Windows 执行环境检查通过。除上述订阅并发问题外，漏洞扫描还发现原有 `golang.org/x/text v0.40.0` 命中 [GO-2026-6629](https://pkg.go.dev/vuln/GO-2026-6629)；已升级到 `v0.41.0`，并使用与 CI 相同的 Go 1.26.9 补丁版本复验 `govulncheck`，结果无可达漏洞。
+
 ## 代码位置
 
 | 层 | 位置 |
 | --- | --- |
 | 定义、输入、结果、状态机 | `server/internal/graph/` |
-| 持久化与协调 | `server/internal/service/graph*.go`、`server/migrations/332–356` |
+| 持久化与协调 | `server/internal/service/graph*.go`、`server/migrations/332–357` |
 | API、权限、归属与快照 | `server/internal/handler/graph*.go` |
 | 执行、隔离、交付、回执 | `server/internal/daemon/graph*.go`、`execenv/graph_codex.go` |
 | CLI | `server/cmd/multica/cmd_graph.go` |

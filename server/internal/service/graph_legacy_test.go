@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,121 @@ func graphLegacyTaskParams(f graphFixture, agentID string) db.CreateAgentTaskPar
 	return db.CreateAgentTaskParams{
 		AgentID: util.MustParseUUID(agentID), RuntimeID: util.MustParseUUID(f.runtime),
 		IssueID: util.MustParseUUID(f.issue), CoalescedCommentIds: []pgtype.UUID{},
+	}
+}
+
+func TestGraphPostgresLegacyChildWritesAllowSubscriberKeyShare(t *testing.T) {
+	for _, operation := range []string{"insert", "reparent"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newGraphFixture(t)
+			ctx := context.Background()
+			childID := uuid.NewString()
+			if operation == "reparent" {
+				if _, err := f.pool.Exec(ctx, `INSERT INTO issue(id,workspace_id,title,status) VALUES($1,$2,'ordinary issue','todo')`, childID, f.ws); err != nil {
+					t.Fatal(err)
+				}
+			}
+			subscriberTx, err := f.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer subscriberTx.Rollback(context.Background())
+			// An uncommitted issue_subscriber insert holds this exact lock via
+			// its existing foreign key. Ordinary children must remain writable
+			// while a concurrent subtree unsubscribe holds that reference lock.
+			if _, err = subscriberTx.Exec(ctx, `SELECT id FROM issue WHERE id=$1 FOR KEY SHARE`, f.issue); err != nil {
+				t.Fatal(err)
+			}
+			writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			if operation == "insert" {
+				_, err = f.pool.Exec(writeCtx, `INSERT INTO issue(id,workspace_id,parent_issue_id,title,status) VALUES($1,$2,$3,'ordinary child','todo')`, childID, f.ws, f.issue)
+			} else {
+				_, err = f.pool.Exec(writeCtx, `UPDATE issue SET parent_issue_id=$3 WHERE id=$1 AND workspace_id=$2`, childID, f.ws, f.issue)
+			}
+			if err != nil {
+				t.Fatalf("ordinary child %s blocked by subscriber KEY SHARE: %v", operation, err)
+			}
+			var parentID string
+			if err = f.pool.QueryRow(ctx, `SELECT parent_issue_id::text FROM issue WHERE id=$1`, childID).Scan(&parentID); err != nil || parentID != f.issue {
+				t.Fatalf("ordinary child parent=%q, err=%v", parentID, err)
+			}
+		})
+	}
+}
+
+func TestGraphPostgresLegacyChildWritesWaitForGraphTakeover(t *testing.T) {
+	for _, operation := range []string{"insert", "reparent"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newGraphFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			childID := uuid.NewString()
+			if operation == "reparent" {
+				if _, err := f.pool.Exec(ctx, `INSERT INTO issue(id,workspace_id,title,status) VALUES($1,$2,'ordinary issue','todo')`, childID, f.ws); err != nil {
+					t.Fatal(err)
+				}
+			}
+			takeover, err := f.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer takeover.Rollback(context.Background())
+			// StartRun holds this lock before acquiring root ownership. A child
+			// writer must wait, then read the ownership committed by that run.
+			if _, err = takeover.Exec(ctx, `SELECT id FROM issue WHERE id=$1 FOR UPDATE`, f.issue); err != nil {
+				t.Fatal(err)
+			}
+			writer, err := f.pool.Acquire(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.Release()
+			writerPID := int32(writer.Conn().PgConn().PID())
+			done := make(chan error, 1)
+			finished := make(chan struct{})
+			go func() {
+				defer close(finished)
+				var writeErr error
+				if operation == "insert" {
+					_, writeErr = writer.Exec(ctx, `INSERT INTO issue(id,workspace_id,parent_issue_id,title,status) VALUES($1,$2,$3,'ordinary child','todo')`, childID, f.ws, f.issue)
+				} else {
+					_, writeErr = writer.Exec(ctx, `UPDATE issue SET parent_issue_id=$3 WHERE id=$1 AND workspace_id=$2`, childID, f.ws, f.issue)
+				}
+				done <- writeErr
+			}()
+			defer func() {
+				cancel()
+				<-finished
+			}()
+			// Wait for database evidence of contention rather than assuming the
+			// writer reached its lock after an arbitrary sleep.
+			for {
+				var blocked bool
+				if err = f.pool.QueryRow(ctx, `SELECT cardinality(pg_blocking_pids($1::integer))>0`, writerPID).Scan(&blocked); err != nil {
+					t.Fatal(err)
+				}
+				if blocked {
+					break
+				}
+				select {
+				case err = <-done:
+					t.Fatalf("ordinary child %s bypassed Graph takeover lock: %v", operation, err)
+				case <-ctx.Done():
+					t.Fatal("child writer never waited for Graph takeover")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			if _, err = takeover.Exec(ctx, `INSERT INTO graph_issue_owner(issue_id,workspace_id,run_id) VALUES($1,$2,$3)`, f.issue, f.ws, uuid.NewString()); err != nil {
+				t.Fatal(err)
+			}
+			if err = takeover.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; err == nil || !strings.Contains(err.Error(), "graph_owned:") {
+				t.Fatalf("ordinary child %s ignored committed Graph ownership: %v", operation, err)
+			}
+		})
 	}
 }
 
