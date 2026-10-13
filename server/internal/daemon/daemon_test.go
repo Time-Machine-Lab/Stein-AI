@@ -5602,3 +5602,82 @@ func TestHermesProfileChainCoversLaunchPrefix(t *testing.T) {
 		t.Errorf("custom = %v, want only the selector removed", strippedCustom)
 	}
 }
+
+// lateStopEvidenceBackend models a backend that keeps tearing its process tree
+// down after the daemon cancels the run: the terminal Result, carrying the
+// physical stop proof, only arrives once the context is cancelled and a short
+// reap delay has passed.
+type lateStopEvidenceBackend struct {
+	stopped bool
+	delay   time.Duration
+}
+
+func (b lateStopEvidenceBackend) Execute(ctx context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		<-ctx.Done()
+		time.Sleep(b.delay)
+		close(msgCh)
+		stopped := b.stopped
+		resCh <- agent.Result{Status: "aborted", ExecutionStopped: &stopped}
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+// A cancelled Graph attempt can only be settled from a stop receipt, so the
+// cancel path must wait for the backend's physical stop proof instead of
+// returning a result that lacks it (which left the run blocked forever).
+func TestExecuteAndDrain_GraphCancelCarriesStopEvidence(t *testing.T) {
+	t.Parallel()
+
+	for name, stopped := range map[string]bool{"confirmed": true, "unconfirmed": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestDaemon(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				cancel()
+			}()
+
+			result, _, err := d.executeAndDrain(ctx, lateStopEvidenceBackend{stopped: stopped, delay: 150 * time.Millisecond}, "p",
+				agent.ExecOptions{DisableWholeRunRetry: true}, slog.Default(), "t-graph-cancel", "", new(atomic.Int32))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Status != "cancelled" {
+				t.Fatalf("status = %q, want cancelled", result.Status)
+			}
+			if result.ExecutionStopped == nil {
+				t.Fatal("cancelled Graph result dropped the backend's stop evidence")
+			}
+			if *result.ExecutionStopped != stopped {
+				t.Fatalf("ExecutionStopped = %v, want %v", *result.ExecutionStopped, stopped)
+			}
+		})
+	}
+}
+
+// Ordinary tasks never read stop evidence, so a cancel must not be delayed
+// waiting for it.
+func TestExecuteAndDrain_NonGraphCancelDoesNotWaitForBackend(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	result, _, err := d.executeAndDrain(ctx, lateStopEvidenceBackend{stopped: true, delay: 3 * time.Second}, "p",
+		agent.ExecOptions{}, slog.Default(), "t-plain-cancel", "", new(atomic.Int32))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "cancelled" || result.ExecutionStopped != nil {
+		t.Fatalf("result = %+v, want cancelled without stop evidence", result)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("non-Graph cancel took %v; it must not wait for the backend", elapsed)
+	}
+}

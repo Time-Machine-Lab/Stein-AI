@@ -8039,14 +8039,32 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		// hand back (and let runTask fail-and-broadcast) a still-flushing
 		// transcript either.
 		waitForDrain()
+		// A Graph attempt is settled only from a stop receipt, and the backend
+		// computes its physical stop proof after it has torn the process tree
+		// down — which is after this cancellation. Collect it (bounded) so a
+		// cancelled, idle-killed or timed-out attempt still carries it; otherwise
+		// the engine sees an unknown stop state and blocks the run indefinitely.
+		// Ordinary tasks never read it and must not be delayed.
+		var stopEvidence *bool
+		if opts.DisableWholeRunRetry {
+			select {
+			case late, ok := <-session.Result:
+				if ok {
+					stopEvidence = late.ExecutionStopped
+				}
+			case <-time.After(graphStopEvidenceWait):
+				taskLog.Warn("backend did not report physical stop evidence after cancellation")
+			}
+		}
 		// Idle watchdog cancels via agentCancel(), which propagates here as
 		// context.Canceled. Check this BEFORE the generic cancelled/timeout
 		// classifiers so a watchdog-induced stop isn't misreported as
 		// "task cancelled by server".
 		if idleWatchdogFired.Load() {
 			return agent.Result{
-				Status: "idle_watchdog",
-				Error:  idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load())),
+				Status:           "idle_watchdog",
+				ExecutionStopped: stopEvidence,
+				Error:            idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load())),
 			}, toolCount.Load(), nil
 		}
 		// Distinguish external cancellation (e.g. server-initiated cancel
@@ -8056,13 +8074,15 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		// drain deadline expiring on its own.
 		if errors.Is(drainCtx.Err(), context.Canceled) {
 			return agent.Result{
-				Status: "cancelled",
-				Error:  "task cancelled by upstream context (server cancel or daemon shutdown)",
+				Status:           "cancelled",
+				ExecutionStopped: stopEvidence,
+				Error:            "task cancelled by upstream context (server cancel or daemon shutdown)",
 			}, toolCount.Load(), nil
 		}
 		return agent.Result{
-			Status: "timeout",
-			Error:  "agent did not produce result within drain timeout",
+			Status:           "timeout",
+			ExecutionStopped: stopEvidence,
+			Error:            "agent did not produce result within drain timeout",
 		}, toolCount.Load(), nil
 	}
 }
@@ -8738,3 +8758,8 @@ func normalizeGraphMcpConfig(raw json.RawMessage) json.RawMessage {
 	}
 	return normalized
 }
+
+// graphStopEvidenceWait bounds how long a cancelled Graph attempt waits for the
+// backend to finish tearing down its process tree and report stop evidence. It
+// covers the Windows job-object and Unix process-group confirmation windows.
+const graphStopEvidenceWait = 30 * time.Second
