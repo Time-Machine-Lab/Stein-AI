@@ -949,6 +949,12 @@ func (h *Handler) ResolveTaskRemoteMCPCredential(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	if task.TriggerEvidenceKind.String == "graph_node" {
+		if err := h.PluginService.ValidateGraphTaskRemoteMCPAuthorization(r.Context(), task.ID, chi.URLParam(r, "contributionId")); err != nil {
+			writeError(w, http.StatusForbidden, "Graph Remote MCP authorization was revoked or the attempt is no longer active")
+			return
+		}
+	}
 	header, credential, err := h.PluginService.ResolveTaskRemoteMCPCredential(r.Context(), task.ID, chi.URLParam(r, "contributionId"))
 	if err != nil {
 		writePluginError(w, r, err)

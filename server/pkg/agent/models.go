@@ -28,11 +28,13 @@ import (
 // default, which is always closer to what the user's account /
 // environment actually supports than a static guess here.
 type Model struct {
-	ID           string             `json:"id"`
-	Label        string             `json:"label"`
-	Provider     string             `json:"provider,omitempty"`
-	Default      bool               `json:"default,omitempty"`
-	ServiceTiers []ModelServiceTier `json:"service_tiers,omitempty"`
+	// EffectiveModel retains the LLM behind a native agent-id selection.
+	EffectiveModel string             `json:"effective_model,omitempty"`
+	ID             string             `json:"id"`
+	Label          string             `json:"label"`
+	Provider       string             `json:"provider,omitempty"`
+	Default        bool               `json:"default,omitempty"`
+	ServiceTiers   []ModelServiceTier `json:"service_tiers,omitempty"`
 	// Thinking advertises the runtime's reasoning/effort catalog for this
 	// model. nil means the runtime/model has no thinking-level control
 	// (or the daemon couldn't discover one); the UI hides its picker. The
@@ -2389,7 +2391,7 @@ func openclawEntriesToModels(entries []openclawAgentEntry) []Model {
 		if e.Model != "" {
 			label = displayName + " (" + e.Model + ")"
 		}
-		models = append(models, Model{ID: id, Label: label, Provider: "openclaw"})
+		models = append(models, Model{ID: id, Label: label, Provider: "openclaw", EffectiveModel: e.Model})
 	}
 	return models
 }

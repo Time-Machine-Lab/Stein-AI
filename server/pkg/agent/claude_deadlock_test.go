@@ -20,11 +20,18 @@ import (
 // invoked with a real agent CLI's argv: TestMain runs before the testing
 // package parses flags, so arguments like `run --format json` never reach it.
 func TestMain(m *testing.M) {
+	if provider := os.Getenv("GRAPH_FAKE_PROTOCOL"); provider != "" {
+		runGraphProtocolHelper(provider)
+		os.Exit(0)
+	}
 	if os.Getenv(opencodeStdinHelperEnv) == "1" {
 		runFakeOpencodeStdinHelper()
 		os.Exit(0)
 	}
 	switch mode := os.Getenv("CLAUDE_FAKE_MODE"); mode {
+	case "graph_contract", "graph_timeout", "graph_descendant":
+		runGraphClaudeHelper(mode)
+		os.Exit(0)
 	case "":
 		os.Exit(m.Run())
 	case "startup_stdout_burst":

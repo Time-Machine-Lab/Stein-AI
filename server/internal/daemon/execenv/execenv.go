@@ -42,10 +42,11 @@ type PrepareParams struct {
 	// Profile is the daemon's profile name (empty = default). It namespaces the
 	// per-issue Codex session store so a second profile-daemon sharing the same
 	// ~/.codex cannot see or GC this daemon's stores (MUL-4424).
-	Profile      string
-	Provider     string // agent provider (determines runtime config and skill injection paths)
-	CodexVersion string // detected Codex CLI version (only used when Provider == "codex")
-	OpenclawBin  string // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
+	Profile          string
+	Provider         string   // agent provider (determines runtime config and skill injection paths)
+	CodexVersion     string   // detected Codex CLI version (only used when Provider == "codex")
+	GraphRuntimeArgs []string // immutable custom runtime command prefix for Graph preparation
+	OpenclawBin      string   // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
 	// McpConfig is the agent's saved `mcp_config` JSON, forwarded to the
 	// provider-specific config preparer when that provider materialises MCP
 	// via a per-task config file. Cursor and OpenClaw consume it here; other
@@ -115,10 +116,13 @@ type PrepareParams struct {
 
 // TaskContextForEnv is the subset of task context used for writing context files.
 type TaskContextForEnv struct {
-	GraphInstructions string
-	IssueID           string
-	TriggerCommentID  string // comment that triggered this task (empty for on_assign)
-	TriggerThreadID   string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
+	GraphInstructions   string
+	GraphNativeAgentID  string
+	GraphEffectiveModel string
+	GraphEnvironment    map[string]string
+	IssueID             string
+	TriggerCommentID    string // comment that triggered this task (empty for on_assign)
+	TriggerThreadID     string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
 	// CommentReplyTargets is set for a comment run that coalesced comments
 	// spanning MORE THAN ONE root thread (MUL-4348). When it has >=2 entries the
 	// workflow's reply step fans out — one reply per thread — instead of the
@@ -523,6 +527,14 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 			return nil, fmt.Errorf("execenv: prepare claude skill settings: %w", err)
 		}
 		env.ClaudeSettingsPath = settingsPath
+		if params.Task.GraphInstructions != "" {
+			if err := prepareGraphClaudeHome(env); err != nil {
+				return nil, fmt.Errorf("execenv: prepare Graph Claude home: %w", err)
+			}
+			for _, slug := range resolveSkillSlugs(params.Task.AgentSkills) {
+				env.GraphSkillPaths = append(env.GraphSkillPaths, filepath.Join(env.WorkDir, ".claude", "skills", slug, "SKILL.md"))
+			}
+		}
 	}
 
 	// For Hermes, redirect HERMES_HOME to a per-task compatibility overlay ONLY
@@ -537,7 +549,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// (service.LoadAgentSkillBundles), so a claimed task's AgentSkills is never
 	// empty and the skill-less branch is effectively unreachable in production.
 	// Emptying an agent's own skill list is NOT a way to opt out of the overlay.
-	if params.Provider == "hermes" && len(params.Task.AgentSkills) > 0 {
+	if params.Provider == "hermes" && params.Task.GraphInstructions == "" && len(params.Task.AgentSkills) > 0 {
 		hermesHome := filepath.Join(envRoot, "hermes-home")
 		sessions, err := prepareHermesHome(hermesHome, params.HermesSourceHome, params.HermesSourceMustExist, params.Task.AgentSkills, params.HermesEnv, params.HermesMemoryStore, params.HermesSessionStore, logger)
 		if err != nil {
@@ -599,7 +611,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// config that the openclaw CLI can't read is a real problem and
 	// silently degrading to a minimal config would mask it by booting
 	// OpenClaw without the agents / providers / API keys it expects.
-	if params.Provider == "openclaw" {
+	if params.Provider == "openclaw" && params.Task.GraphInstructions == "" {
 		result, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
 			OpenclawBin: params.OpenclawBin,
 			McpConfig:   params.McpConfig,
@@ -611,6 +623,31 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		}
 		env.OpenclawConfigPath = result.ConfigPath
 		env.OpenclawIncludeRoot = result.IncludeRoot
+	}
+
+	if params.Task.GraphInstructions != "" && env.GraphHome == "" {
+		env.GraphHome = filepath.Join(envRoot, "graph-home")
+		if err := os.MkdirAll(env.GraphHome, 0700); err != nil {
+			return nil, err
+		}
+		switch params.Provider {
+		case "openclaw":
+			if err := prepareGraphOpenclawHome(env, params); err != nil {
+				return nil, err
+			}
+		case "qwenpaw":
+			if err := prepareGraphQwenpawHome(env, params); err != nil {
+				return nil, err
+			}
+		case "hermes":
+			if err := prepareGraphHermesHome(env, params); err != nil {
+				return nil, err
+			}
+		default:
+			if err := prepareGraphPortableProvider(env, params); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	logger.Info("execenv: prepared env", "root", envRoot, "repos_available", len(params.Task.Repos))

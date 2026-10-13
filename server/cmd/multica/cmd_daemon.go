@@ -853,6 +853,9 @@ func readLogTailSince(logPath string, sinceOffset int64, maxLines int) []string 
 // buildDaemonStartArgs constructs args for the background child process.
 func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	args := []string{"daemon", "start", "--foreground"}
+	if cmd.Flags().Changed("workspace-id") {
+		args = append(args, "--workspace-id", flagString(cmd, "workspace-id"))
+	}
 
 	if v := flagString(cmd, "daemon-id"); v != "" {
 		args = append(args, "--daemon-id", v)
@@ -973,6 +976,7 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 
 	overrides := daemon.Overrides{
+		WorkspaceIDs:   explicitDaemonWorkspaceIDs(cmd),
 		ServerURL:      serverURL,
 		DaemonID:       flagString(cmd, "daemon-id"),
 		DeviceName:     deviceNameFlag,
@@ -2356,4 +2360,13 @@ func formatAge(seconds int64) string {
 	default:
 		return fmt.Sprintf("%ds", seconds)
 	}
+}
+
+// A user's default CLI workspace does not silently narrow an existing daemon.
+// Only an explicitly passed flag applies to registration and task polling.
+func explicitDaemonWorkspaceIDs(cmd *cobra.Command) []string {
+	if !cmd.Flags().Changed("workspace-id") {
+		return nil
+	}
+	return []string{flagString(cmd, "workspace-id")}
 }

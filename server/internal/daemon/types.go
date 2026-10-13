@@ -210,6 +210,7 @@ type CoalescedCommentData struct {
 
 // AgentData holds agent details returned by the claim endpoint.
 type AgentData struct {
+	GraphEffectiveModel   string                     `json:"graph_effective_model,omitempty"`
 	ID                    string                     `json:"id"`
 	Name                  string                     `json:"name"`
 	Instructions          string                     `json:"instructions"`

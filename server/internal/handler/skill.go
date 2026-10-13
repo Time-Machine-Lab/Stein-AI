@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -249,11 +250,14 @@ func validateFilePath(p string) bool {
 	if p == "" {
 		return false
 	}
-	if filepath.IsAbs(p) {
+	// Skill paths are portable archive entries. Reject both slash conventions
+	// and drive-qualified paths regardless of the server's operating system.
+	portable := strings.ReplaceAll(p, `\`, "/")
+	if filepath.IsAbs(p) || strings.HasPrefix(portable, "/") || strings.Contains(portable, ":") {
 		return false
 	}
-	cleaned := filepath.Clean(p)
-	if strings.HasPrefix(cleaned, "..") {
+	cleaned := path.Clean(portable)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return false
 	}
 	return true

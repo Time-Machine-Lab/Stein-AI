@@ -14,8 +14,16 @@ beforeEach(() => {
 describe("draft cleanup registry", () => {
   it("clears workspace-scoped keys with the slug suffix and global keys bare", () => {
     const adapter = { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() };
-    registerDraftCleanup({ storageKey: "scoped_a", workspaceScoped: true, resetInMemory: vi.fn() });
-    registerDraftCleanup({ storageKey: "global_b", workspaceScoped: false, resetInMemory: vi.fn() });
+    registerDraftCleanup({
+      storageKey: "scoped_a",
+      workspaceScoped: true,
+      resetInMemory: vi.fn(),
+    });
+    registerDraftCleanup({
+      storageKey: "global_b",
+      workspaceScoped: false,
+      resetInMemory: vi.fn(),
+    });
 
     clearRegisteredWorkspaceDrafts(adapter, "acme");
 
@@ -27,8 +35,16 @@ describe("draft cleanup registry", () => {
   it("resets every registered store's in-memory state", () => {
     const resetA = vi.fn();
     const resetB = vi.fn();
-    registerDraftCleanup({ storageKey: "a", workspaceScoped: true, resetInMemory: resetA });
-    registerDraftCleanup({ storageKey: "b", workspaceScoped: true, resetInMemory: resetB });
+    registerDraftCleanup({
+      storageKey: "a",
+      workspaceScoped: true,
+      resetInMemory: resetA,
+    });
+    registerDraftCleanup({
+      storageKey: "b",
+      workspaceScoped: true,
+      resetInMemory: resetB,
+    });
 
     resetAllRegisteredDrafts();
 
@@ -37,9 +53,30 @@ describe("draft cleanup registry", () => {
   });
 
   it("is idempotent per key — re-registering overwrites, never duplicates", () => {
-    registerDraftCleanup({ storageKey: "dupe", workspaceScoped: true, resetInMemory: vi.fn() });
-    registerDraftCleanup({ storageKey: "dupe", workspaceScoped: true, resetInMemory: vi.fn() });
+    registerDraftCleanup({
+      storageKey: "dupe",
+      workspaceScoped: true,
+      resetInMemory: vi.fn(),
+    });
+    registerDraftCleanup({
+      storageKey: "dupe",
+      workspaceScoped: true,
+      resetInMemory: vi.fn(),
+    });
 
     expect(__getRegisteredDraftKeysForTest()).toEqual(["dupe"]);
+  });
+  it("delegates indexed storage cleanup to the store without deleting its global index", () => {
+    const adapter = { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() };
+    const clearWorkspace = vi.fn();
+    registerDraftCleanup({
+      storageKey: "indexed",
+      workspaceScoped: false,
+      resetInMemory: vi.fn(),
+      clearWorkspace,
+    });
+    clearRegisteredWorkspaceDrafts(adapter, "acme");
+    expect(clearWorkspace).toHaveBeenCalledWith(adapter, "acme");
+    expect(adapter.removeItem).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -22,7 +23,7 @@ import (
 var graphCmd = newGraphCommand()
 
 func newGraphCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "graph", Short: "Manage serial Graph workflows and scoped node results"}
+	cmd := &cobra.Command{Use: "graph", Short: "Manage versioned Graph workflows and scoped node results"}
 	cmd.PersistentFlags().String("output", "json", "Output format: json")
 	add := func(use, description string, args cobra.PositionalArgs, run func(*cobra.Command, []string) error) *cobra.Command {
 		child := &cobra.Command{Use: use, Short: description, Args: args, RunE: run}
@@ -31,6 +32,11 @@ func newGraphCommand() *cobra.Command {
 	}
 	list := add("list", "List graph templates or runs", cobra.NoArgs, runGraphRead)
 	list.Flags().Bool("runs", false, "List runs instead of templates")
+	list.Flags().String("search", "", "Search graph names or run/root issue titles (returns a paginated page)")
+	list.Flags().String("state", "", "Filter by template or run state")
+	list.Flags().String("graph-id", "", "Filter runs by graph UUID")
+	list.Flags().String("cursor", "", "Opaque next_cursor from the previous page")
+	list.Flags().Int("limit", 30, "Search page size (1..100)")
 	get := add("get <id>", "Get a run, or a template with --definition", exactArgs(1), runGraphRead)
 	get.Flags().Bool("definition", false, "Read a graph definition instead of a run")
 	for _, action := range []string{"create", "update"} {
@@ -53,7 +59,8 @@ func newGraphCommand() *cobra.Command {
 	run.Flags().String("version-id", "", "Published version UUID")
 	run.Flags().String("issue", "", "Parent issue UUID or issue key")
 	run.Flags().String("input-file", "", "Run input JSON object file, or - for stdin (default {})")
-	run.Flags().StringArray("runtime", nil, "Fixed runtime binding node_key=runtime_uuid (repeatable)")
+	run.Flags().StringArray("runtime", nil, "Fixed runtime binding definition_path=runtime_uuid (repeatable; nested example loop/body/agent)")
+	run.Flags().String("previous-run-id", "", "Terminal run UUID to link as rework")
 	run.Flags().String("repository-id", "", "Repository identity for code steps")
 	run.Flags().String("base-sha", "", "Immutable base commit SHA for code steps")
 	run.Flags().String("deadline", "", "Optional deadline in RFC3339 format")
@@ -69,6 +76,7 @@ func newGraphCommand() *cobra.Command {
 		}
 		if action == "approver" {
 			child.Flags().String("member-id", "", "New approver membership UUID")
+			child.Flags().String("previous-member-id", "", "Membership UUID being replaced in a multi-person gate (resets gate votes)")
 			_ = child.MarkFlagRequired("member-id")
 		}
 	}
@@ -180,6 +188,27 @@ func runGraphRead(cmd *cobra.Command, args []string) error {
 		runs, _ := cmd.Flags().GetBool("runs")
 		if runs {
 			path = "/api/graph-runs"
+		}
+		search := false
+		for _, flag := range []string{"search", "state", "graph-id", "cursor", "limit"} {
+			search = search || cmd.Flags().Changed(flag)
+		}
+		if search {
+			limit, _ := cmd.Flags().GetInt("limit")
+			if limit < 1 || limit > 100 {
+				return fmt.Errorf("--limit must be between 1 and 100")
+			}
+			query := url.Values{"limit": {strconv.Itoa(limit)}}
+			for flag, key := range map[string]string{"search": "q", "state": "state", "graph-id": "graph_id", "cursor": "cursor"} {
+				value, _ := cmd.Flags().GetString(flag)
+				if value != "" {
+					query.Set(key, value)
+				}
+			}
+			if query.Get("graph_id") != "" && !runs {
+				return fmt.Errorf("--graph-id requires --runs")
+			}
+			path += "/search?" + query.Encode()
 		}
 	case "get":
 		definition, _ := cmd.Flags().GetBool("definition")
@@ -340,6 +369,9 @@ func runGraphStart(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	body["version_id"], body["root_issue_id"], body["input"], body["runtime_bindings"] = version, issueRef.ID, input, bindings
+	if previous, _ := cmd.Flags().GetString("previous-run-id"); previous != "" {
+		body["previous_run_id"] = previous
+	}
 	var response json.RawMessage
 	if err := client.PostJSON(ctx, "/api/graph-runs", body, &response); err != nil {
 		return err
@@ -360,6 +392,9 @@ func runGraphControl(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Name() == "approver" {
 		body["approver_id"], _ = cmd.Flags().GetString("member-id")
+		if previous, _ := cmd.Flags().GetString("previous-member-id"); previous != "" {
+			body["previous_approver_id"] = previous
+		}
 	}
 	return graphPostCommand(cmd, "/api/graph-runs/"+url.PathEscape(args[0])+"/"+cmd.Name(), body)
 }

@@ -6,6 +6,7 @@ import { workspaceListOptions } from "@/data/queries/workspaces";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { RealtimeProvider } from "@/data/realtime/realtime-provider";
 import { useInboxRealtime } from "@/data/realtime/use-inbox-realtime";
+import { useGraphsRealtime } from "@/data/realtime/use-graphs-realtime";
 import { useIssuesRealtime } from "@/data/realtime/use-issues-realtime";
 import { useMyIssuesRealtime } from "@/data/realtime/use-my-issues-realtime";
 import { useChatSessionsRealtime } from "@/data/realtime/use-chat-sessions-realtime";
@@ -75,6 +76,7 @@ export const unstable_settings = { anchor: "(tabs)" } as const;
 function RealtimeSubscriptions() {
   useInboxRealtime();
   useIssuesRealtime();
+  useGraphsRealtime();
   useMyIssuesRealtime();
   useChatSessionsRealtime();
   useProjectsRealtime();
@@ -133,6 +135,40 @@ export default function WorkspaceLayout() {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen
+          name="graph/index"
+          options={{ title: "Graph", headerBackTitle: "Back" }}
+        />
+        <Stack.Screen
+          name="graph/new"
+          options={{
+            title: "Create Graph",
+            presentation: "modal",
+            headerLeft: () => <ModalCloseButton />,
+          }}
+        />
+        <Stack.Screen
+          name="graph/[id]/index"
+          options={{ title: "Workflow", headerBackTitle: "Graph" }}
+        />
+        <Stack.Screen
+          name="graph/[id]/start"
+          options={{ title: "Start workflow", headerBackTitle: "Workflow" }}
+        />
+        <Stack.Screen
+          name="graph/[id]/triggers"
+          options={{ title: "Triggers", headerBackTitle: "Workflow" }}
+        />
+        <Stack.Screen
+          name="graph/runs"
+          options={{ title: "Graph runs", headerBackTitle: "Graph" }}
+        />
+        <Stack.Screen
+          name="graph/run/[id]"
+          options={{ title: "Graph run", headerBackTitle: "Back" }}
+        />
+        <Stack.Screen name="graph/picker" options={SHEET_OPTIONS} />
+        <Stack.Screen name="graph/node" options={SHEET_OPTIONS} />
+        <Stack.Screen
           name="issue/[id]"
           options={{
             title: "Issue",
@@ -175,10 +211,7 @@ export default function WorkspaceLayout() {
             `fitToContents` zero-size / padding bugs on iOS 26 + Expo 55),
             iOS native grabber, and contentStyle.height=100% as a safety
             net against the same zero-size class of bugs. */}
-        <Stack.Screen
-          name="issue/[id]/picker/status"
-          options={SHEET_OPTIONS}
-        />
+        <Stack.Screen name="issue/[id]/picker/status" options={SHEET_OPTIONS} />
         <Stack.Screen
           name="issue/[id]/picker/priority"
           options={SHEET_OPTIONS}
@@ -198,10 +231,7 @@ export default function WorkspaceLayout() {
             title: "Assignee",
           }}
         />
-        <Stack.Screen
-          name="issue/[id]/picker/label"
-          options={SHEET_OPTIONS}
-        />
+        <Stack.Screen name="issue/[id]/picker/label" options={SHEET_OPTIONS} />
         <Stack.Screen
           name="mention-picker"
           options={{
@@ -235,10 +265,7 @@ export default function WorkspaceLayout() {
           name="project/[id]/picker/priority"
           options={SHEET_OPTIONS}
         />
-        <Stack.Screen
-          name="project/[id]/picker/lead"
-          options={SHEET_OPTIONS}
-        />
+        <Stack.Screen name="project/[id]/picker/lead" options={SHEET_OPTIONS} />
         <Stack.Screen
           name="project/[id]/add-resource"
           options={SHEET_OPTIONS}
@@ -247,10 +274,7 @@ export default function WorkspaceLayout() {
             new-issue.tsx Stack.Screen (which is itself a `modal`).
             Expo Router 55 / RN Screens 4 support a formSheet pushed on top
             of a modal in the same Stack. */}
-        <Stack.Screen
-          name="new-issue-picker/status"
-          options={SHEET_OPTIONS}
-        />
+        <Stack.Screen name="new-issue-picker/status" options={SHEET_OPTIONS} />
         <Stack.Screen
           name="new-issue-picker/priority"
           options={SHEET_OPTIONS}
@@ -263,10 +287,7 @@ export default function WorkspaceLayout() {
             title: "Assignee",
           }}
         />
-        <Stack.Screen
-          name="new-issue-picker/project"
-          options={SHEET_OPTIONS}
-        />
+        <Stack.Screen name="new-issue-picker/project" options={SHEET_OPTIONS} />
         <Stack.Screen
           name="new-issue-picker/due-date"
           options={SHEET_OPTIONS}

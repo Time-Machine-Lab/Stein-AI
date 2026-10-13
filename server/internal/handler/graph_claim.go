@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/graph"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/pluginruntime"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -75,6 +77,43 @@ func (h *Handler) buildGraphClaim(r *http.Request, task db.AgentTaskQueue, runti
 	if err = json.Unmarshal(gc.Manifest.NodeSpec.AgentConfig, &frozen); err != nil {
 		return resp, err
 	}
+	if frozen.Runtime != nil {
+		live, loadErr := loadGraphRuntimeSnapshot(r.Context(), h.Queries, runtime.ID)
+		if loadErr != nil {
+			return resp, loadErr
+		}
+		if frozen.Runtime.RuntimeID != live.RuntimeID || frozen.Runtime.Provider != live.Provider || frozen.Runtime.ProfileID != live.ProfileID || frozen.Runtime.CommandName != live.CommandName || !slices.Equal(frozen.Runtime.FixedArgs, live.FixedArgs) {
+			return resp, graphConfigurationError("runtime profile changed; publish a new Graph version")
+		}
+	}
+	if gc.Manifest.NodeSpec.Node.Type == graph.NodeTypeAgent && !graphRuntimeCompatible(runtime) || gc.Manifest.NodeSpec.Node.Type == graph.NodeTypeScript && !runtimeHasCapability(runtime.Metadata, protocol.DaemonCapabilityGraphExecutionV2) {
+		return resp, &service.GraphError{Code: "capability_missing", Message: "runtime lacks Graph execution capabilities"}
+	}
+	if len(frozen.PluginEntries) > 0 {
+		manifest, loadErr := h.Queries.GetPluginExecutionManifestByTask(r.Context(), task.ID)
+		if loadErr != nil {
+			return resp, loadErr
+		}
+		entries, loadErr := pluginruntime.ParseEntries(manifest.OrderedContributions)
+		if loadErr != nil || !reflect.DeepEqual(entries, frozen.PluginEntries) {
+			return resp, graphConfigurationError("task plugin manifest differs from the published Graph")
+		}
+		_, _, resp.PluginExecutionManifest, loadErr = h.TaskService.LoadTaskPluginSkillBundles(r.Context(), task.ID)
+		if loadErr != nil {
+			return resp, loadErr
+		}
+		var diagnostics []string
+		resp.RemoteMCPConnections, diagnostics, loadErr = h.PluginService.ResolveTaskRemoteMCPConnections(r.Context(), task.ID)
+		if loadErr != nil {
+			return resp, loadErr
+		}
+		if len(resp.RemoteMCPConnections) > 0 && !requestHasClientCapability(r, protocol.DaemonCapabilityRemoteMCPV1) {
+			return resp, &service.GraphError{Code: "capability_missing", Message: "daemon does not support Graph Remote MCP"}
+		}
+		if resp.PluginExecutionManifest != nil {
+			resp.PluginExecutionManifest.Diagnostics = append(resp.PluginExecutionManifest.Diagnostics, diagnostics...)
+		}
+	}
 	agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
 	if err != nil {
 		return resp, err
@@ -86,10 +125,14 @@ func (h *Handler) buildGraphClaim(r *http.Request, task db.AgentTaskQueue, runti
 		}
 	}
 	frozen.CustomEnv = map[string]string{}
+	liveDigests := graphEnvironmentValueDigests(env)
 	for _, key := range frozen.EnvironmentKeys {
 		value, ok := env[key]
 		if !ok {
 			return resp, graphConfigurationError("required environment credential is unavailable")
+		}
+		if expected, pinned := frozen.EnvironmentValueDigests[key]; pinned && liveDigests[key] != expected {
+			return resp, graphConfigurationError("environment configuration changed; publish a new Graph version")
 		}
 		frozen.CustomEnv[key] = value
 	}
@@ -240,6 +283,9 @@ func (h *Handler) validateGraphArtifacts(ctx context.Context, tx pgx.Tx, run ser
 				return graphConfigurationError("Git artifact changed repository identity")
 			}
 			expected := fmt.Sprintf("refs/heads/multica/graphs/%s/%s/%d", run.ID, node.NodeKey, result.Identity.AttemptNo)
+			if node.Spec != nil && node.Spec.InstanceKey != "" {
+				expected = fmt.Sprintf("refs/heads/multica/graphs/%s/%s/%d", run.ID, result.Identity.NodeRunID, result.Identity.AttemptNo)
+			}
 			if artifact.ManagedRef != expected {
 				return graphConfigurationError("Git artifact ref is outside this attempt")
 			}

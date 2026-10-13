@@ -228,7 +228,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -242,7 +242,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	}
 	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[dsh:stderr] "), agentStderrTailBytes)
 	cmd.Stderr = stderrBuf
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start dsh: %w", err)
 	}

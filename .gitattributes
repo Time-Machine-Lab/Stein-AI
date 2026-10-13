@@ -4,3 +4,8 @@ docker/entrypoint.sh text eol=lf
 
 # Default behavior
 * text=auto
+
+# Bundled release signatures cover the exact archive payload bytes.
+server/internal/pluginbundled/releases/** -text
+# Embedded skill documents must have the same frontmatter on every build host.
+server/internal/service/builtin_skills/** text eol=lf

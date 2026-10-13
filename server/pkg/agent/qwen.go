@@ -104,7 +104,7 @@ func (b *qwenBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -113,7 +113,7 @@ func (b *qwenBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	}
 	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[qwen:stderr] "), agentStderrTailBytes)
 	cmd.Stderr = stderrBuf
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start qwen: %w", err)
 	}

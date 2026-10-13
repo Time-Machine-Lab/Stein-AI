@@ -92,7 +92,7 @@ func (b *qwenpawBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -112,7 +112,7 @@ func (b *qwenpawBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 		return nil, fmt.Errorf("qwenpaw stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start qwenpaw: %w", err)
 	}
@@ -203,7 +203,13 @@ func (b *qwenpawBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 			return
 		}
 
+		frozenMCPCount := len(mcpServers)
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "qwenpaw", b.cfg)
+
+		if b.cfg.ReplaceEnvironment && len(mcpServers) != frozenMCPCount {
+			resCh <- Result{Status: "failed", Error: "runtime cannot load every frozen Graph MCP transport"}
+			return
+		}
 
 		// 2. Create or resume a session.
 		cwd := opts.Cwd
@@ -287,6 +293,17 @@ func (b *qwenpawBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 
 		c.sessionID = sessionID
 		b.cfg.Logger.Info("qwenpaw session created", "session_id", sessionID)
+
+		if b.cfg.ReplaceEnvironment {
+			if opts.QwenpawWorkspace == "" || b.cfg.Env["QWENPAW_WORKING_DIR"] == "" {
+				resCh <- Result{Status: "failed", Error: "Graph QwenPaw requires a private agent registry and workspace"}
+				return
+			}
+			if _, err := c.request(runCtx, "session/set_model", map[string]any{"sessionId": sessionID, "modelId": opts.Model}); err != nil {
+				resCh <- Result{Status: "failed", Error: fmt.Sprintf("QwenPaw rejected frozen Graph model: %v", err)}
+				return
+			}
+		}
 
 		// 3. Build the prompt content. If we have a system prompt, prepend it.
 		userText := prompt

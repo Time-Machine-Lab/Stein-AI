@@ -49,6 +49,20 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	runCtx, cancel := runContext(ctx, timeout)
 
 	args := buildClaudeArgs(opts, b.cfg.Logger)
+	if b.cfg.ReplaceEnvironment {
+		if err := ValidateGraphLaunch("claude", append(append([]string{}, opts.ExtraArgs...), opts.CustomArgs...), b.cfg.LaunchPrefix); err != nil {
+			cancel()
+			return nil, err
+		}
+		if opts.ResumeSessionID != "" || opts.Model == "" {
+			cancel()
+			return nil, fmt.Errorf("Graph requires an explicit model and fresh session")
+		}
+		args = append(args, "--bare", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence")
+		if len(b.cfg.GraphSkillPaths) > 0 {
+			prompt += "\n\nFrozen Graph Skills (read the applicable SKILL.md files and their supporting files):\n" + strings.Join(b.cfg.GraphSkillPaths, "\n")
+		}
+	}
 
 	// If the caller provided an MCP config, write it to a temp file and pass
 	// --mcp-config <path> so the agent uses a controlled set of MCP servers
@@ -94,7 +108,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 	if err := claudeRootSudoPreflight(args, cmd.Env); err != nil {
 		cancel()
 		return nil, err
@@ -120,7 +134,11 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[claude:stderr] "), agentStderrTailBytes)
 	cmd.Stderr = stderrBuf
 
-	if err := cmd.Start(); err != nil {
+	start := cmd.Start
+	if b.cfg.ReplaceEnvironment {
+		start = func() error { return startOwnedProcessTree(cmd, b.cfg.Logger) }
+	}
+	if err := start(); err != nil {
 		closeStdin()
 		cancel()
 		return nil, fmt.Errorf("start claude: %w", err)
@@ -165,6 +183,9 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
+		if b.cfg.ReplaceEnvironment {
+			defer releaseProcessGroup(cmd)
+		}
 		if mcpConfigPath != "" {
 			defer cleanupMcpConfigTemp(mcpConfigPath)
 		}
@@ -284,6 +305,14 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		// Wait for process exit, then release the cancellation handler.
 		exitErr := cmd.Wait()
 		close(procDone)
+		var executionStopped *bool
+		if b.cfg.ReplaceEnvironment {
+			if !waitProcessGroupGone(cmd, 50*time.Millisecond) {
+				signalProcessGroup(cmd, syscall.SIGKILL)
+			}
+			stopped := cmd.ProcessState != nil && waitProcessGroupGone(cmd, claudeTerminateGrace())
+			executionStopped = &stopped
+		}
 		duration := time.Since(startTime)
 		// writeDone is buffered (cap 1) and the writer always sends — by the
 		// time cmd has exited, the prompt write has either succeeded, hit a
@@ -353,13 +382,14 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 
 		resCh <- Result{
-			Status:         finalStatus,
-			Output:         finalOutput,
-			Error:          finalError,
-			DurationMs:     duration.Milliseconds(),
-			SessionID:      reportedSessionID,
-			Usage:          usage,
-			ResumeRejected: resumeRejected,
+			ExecutionStopped: executionStopped,
+			Status:           finalStatus,
+			Output:           finalOutput,
+			Error:            finalError,
+			DurationMs:       duration.Milliseconds(),
+			SessionID:        reportedSessionID,
+			Usage:            usage,
+			ResumeRejected:   resumeRejected,
 		}
 	}()
 

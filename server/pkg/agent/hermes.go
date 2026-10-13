@@ -301,7 +301,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		b.cfg.Logger.Debug("hermes ignoring ExecOptions.SystemPrompt; using cwd-scoped context files", "cwd", opts.Cwd)
 	}
 
-	env := buildEnv(b.cfg.Env)
+	env := b.cfg.executionEnvironment()
 	// Enable yolo mode so Hermes auto-approves all tool executions.
 	env = append(env, "HERMES_YOLO_MODE=1")
 	cmd.Env = env
@@ -340,7 +340,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		return nil, fmt.Errorf("hermes stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start hermes: %w", err)
 	}
@@ -485,7 +485,13 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		// agentCapabilities.mcpCapabilities; sending an http/sse entry to
 		// a runtime that says it only supports stdio reliably rejects the
 		// whole session/new request.
+		frozenMCPCount := len(mcpServers)
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "hermes", b.cfg)
+
+		if b.cfg.ReplaceEnvironment && len(mcpServers) != frozenMCPCount {
+			resCh <- Result{Status: "failed", Error: "runtime cannot load every frozen Graph MCP transport"}
+			return
+		}
 
 		// 2. Create or resume a session.
 		cwd := opts.Cwd
@@ -619,8 +625,12 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		//
 		// sessionResult stops describing the live session once set_model runs,
 		// because an ACP effort option may depend on the current model.
-		applyACPEffortOption(runCtx, c.request, "hermes", b.cfg.Logger,
+		effortConfirmed := applyACPEffortOption(runCtx, c.request, "hermes", b.cfg.Logger,
 			sessionID, sessionResult, opts.ThinkingLevel, opts.Model == "")
+		if b.cfg.ReplaceEnvironment && !effortConfirmed {
+			resCh <- Result{Status: "failed", Error: "runtime did not confirm frozen Graph reasoning effort"}
+			return
+		}
 
 		// 4. Send the prompt and wait for PromptResponse.
 		//

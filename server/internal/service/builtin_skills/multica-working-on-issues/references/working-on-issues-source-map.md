@@ -19,6 +19,17 @@
   `finalizeGraphTask` define structured delivery and stopped receipts.
 - `server/internal/graph/result.go`: `ValidateResult` enforces execution-mode
   artifacts, output schema, diagnostics and the tested candidate SHA.
+- `server/internal/handler/graph_generation.go`: `GetGraphGenerationOptions`
+  reports configured AI availability; `GenerateGraph` accepts human workspace
+  member requests at `POST /api/graphs/generate` with `prompt`, `agent_id` and
+  `approver_id`. It validates invocation permission and Graph eligibility,
+  uses the server-internal LLM client, and returns a validated `definition`
+  without persisting or executing it. Agent and approver identities are fixed
+  by the server. `graph_generation_context.go` includes the current definition
+  and bounded conversation history; V2 output is checked against topology,
+  bindings and authorized actor aliases before being returned as a proposal.
+- `packages/views/graphs/graph-editor.tsx`: the shared web/desktop creation
+  editor presents AI authoring, visual step editing and explicit draft saving.
 
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`

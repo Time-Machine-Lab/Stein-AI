@@ -35,6 +35,8 @@ export interface DraftCleanupEntry {
    * client-side navigation (no full page reload clears module singletons).
    */
   resetInMemory: () => void;
+  /** Custom cleanup for indexed stores whose keys include document/user identity. */
+  clearWorkspace?: (adapter: StorageAdapter, slug: string) => void;
 }
 
 const entries = new Map<string, DraftCleanupEntry>();
@@ -55,7 +57,9 @@ export function clearRegisteredWorkspaceDrafts(
   slug: string,
 ): void {
   for (const entry of entries.values()) {
-    if (entry.workspaceScoped) {
+    if (entry.clearWorkspace) {
+      entry.clearWorkspace(adapter, slug);
+    } else if (entry.workspaceScoped) {
       adapter.removeItem(`${entry.storageKey}:${slug}`);
     } else {
       adapter.removeItem(entry.storageKey);

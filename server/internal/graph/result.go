@@ -12,6 +12,7 @@ const ProtocolVersion = 1
 
 var hashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var commitPattern = regexp.MustCompile(`^([a-f0-9]{40}|[a-f0-9]{64})$`)
+var instanceSegmentPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 
 type AttemptIdentity struct {
 	RunID               string `json:"run_id"`
@@ -69,6 +70,7 @@ type NodeSpec struct {
 	AgentConfig     json.RawMessage  `json:"agent_config"`
 	Skills          []SkillSnapshot  `json:"skills,omitempty"`
 	Repository      *RepositoryInput `json:"repository,omitempty"`
+	InstanceKey     string           `json:"instance_key,omitempty"`
 }
 
 type AttemptManifest struct {
@@ -82,11 +84,11 @@ func CanonicalNodeSpec(spec NodeSpec) ([]byte, string, error) {
 	if spec.ProtocolVersion != ProtocolVersion {
 		return nil, "", invalid("protocol_version", "unsupported Graph protocol")
 	}
-	if spec.Node.Type != NodeTypeAgent {
-		return nil, "", invalid("node", "attempt specs require an agent node")
-	}
-	if err := validateNode(spec.Node); err != nil {
+	if err := validateExecutableNode(spec.Node); err != nil {
 		return nil, "", err
+	}
+	if spec.InstanceKey != "" && !validInstanceKey(spec.InstanceKey) {
+		return nil, "", invalid("instance_key", "invalid scoped execution instance key")
 	}
 	input, hash, err := CanonicalJSON(spec.Input)
 	if err != nil {
@@ -214,11 +216,8 @@ type Result struct {
 
 // ValidateResult checks shape only. The service must verify artifact ownership, availability, and receipts.
 func ValidateResult(node Node, result Result) error {
-	if err := validateNode(node); err != nil {
+	if err := validateExecutableNode(node); err != nil {
 		return err
-	}
-	if node.Type != NodeTypeAgent {
-		return invalid("node", "results require an agent node")
 	}
 	if err := validateAttemptIdentity(result.Identity); err != nil {
 		return err
@@ -279,6 +278,32 @@ func ValidateResult(node Node, result Result) error {
 	}
 	_, _, err := canonicalValue(result)
 	return err
+}
+
+func validateExecutableNode(node Node) error {
+	if node.Type == NodeTypeAgent {
+		if hasV2Config(node) {
+			return invalid("node", "unexpected execution configuration")
+		}
+		return validateNode(node)
+	}
+	if node.Type == NodeTypeScript {
+		return validateV2Node(node)
+	}
+	return invalid("node", "attempts require an agent or script node")
+}
+
+func validInstanceKey(key string) bool {
+	if len(key) > 512 || key == "" {
+		return false
+	}
+	parts := strings.Split(key, "/")
+	for _, part := range parts {
+		if !instanceSegmentPattern.MatchString(part) {
+			return false
+		}
+	}
+	return true
 }
 
 type StopReceipt struct {

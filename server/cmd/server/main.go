@@ -475,6 +475,7 @@ func main() {
 		h.GraphService.NewRunsEnabled = os.Getenv("MULTICA_GRAPH_DISABLE_NEW_RUNS") != "true"
 		h.GraphService.AdvanceEnabled = os.Getenv("MULTICA_GRAPH_DISABLE_ADVANCEMENT") != "true"
 		go h.GraphService.RunCoordinator(sweepCtx)
+		go h.GraphService.RunTriggerCoordinator(sweepCtx)
 	}
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)

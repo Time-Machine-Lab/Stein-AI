@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,16 +63,20 @@ func (s *GraphService) StartRun(ctx context.Context, ws, user string, p GraphSta
 	if err = s.authorizeVersion(ctx, tx, ws, user, version, p.RuntimeBindings); err != nil {
 		return run, err
 	}
-	for _, node := range version.Definition.Nodes {
-		if string(node.Type) == "agent" {
-			runtime := p.RuntimeBindings[node.Key]
+	err = graph.WalkNodes(version.Definition, func(path string, node graph.Node) error {
+		if node.Type == graph.NodeTypeAgent || node.Type == graph.NodeTypeScript {
+			runtime := p.RuntimeBindings[path]
 			if err = graphUUIDs(runtime); err != nil {
-				return run, graphError("runtime_required", "every agent node requires a fixed runtime")
+				return graphError("runtime_required", "every executable node requires a fixed runtime")
 			}
 			if string(node.ExecutionMode) != "none" && p.Repository == nil {
-				return run, graphError("repository_required", "code nodes require a fixed repository input")
+				return graphError("repository_required", "code nodes require a fixed repository input")
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return run, err
 	}
 	var rootSnapshot []byte
 	var parentID *string
@@ -141,6 +146,10 @@ OR EXISTS(SELECT 1 FROM autopilot_run WHERE issue_id=$1 AND status IN ('issue_cr
 	}
 	now := time.Now().UTC()
 	run = GraphRunRecord{ID: uuid.NewString(), WorkspaceID: ws, RootIssueID: p.RootIssueID, VersionID: p.VersionID, PreviousRunID: p.PreviousRunID, InitiatorID: user, State: "active", ControlState: "run", Revision: 0, Input: input, InputHash: inputHash, RootSnapshot: rootSnapshot, RuntimeBindings: p.RuntimeBindings, Repository: p.Repository, Deadline: p.Deadline, CreatedAt: now, UpdatedAt: now, Nodes: []GraphNodeRunRecord{}, Events: []GraphRunEvent{}}
+	run.SchemaVersion = version.Definition.SchemaVersion
+	run.GraphID = version.GraphID
+	run.GraphName = version.Definition.Name
+	run.Definition = &version.Definition
 	if _, err = tx.Exec(ctx, `SELECT set_config('multica.graph_run_id',$1,true)`, run.ID); err != nil {
 		return run, err
 	}
@@ -151,27 +160,33 @@ OR EXISTS(SELECT 1 FROM autopilot_run WHERE issue_id=$1 AND status IN ('issue_cr
 	if owned.RowsAffected() != 1 {
 		return run, graphError("invalid_root", "issue is owned by another Graph node")
 	}
-	for _, node := range ordered {
-		n := GraphNodeRunRecord{ID: uuid.NewString(), NodeKey: node.Key, NodeType: string(node.Type), State: "pending", MaxAttempts: node.MaxAttempts, Attempts: []GraphAttemptRecord{}, Submissions: []GraphSubmissionRecord{}}
-		if n.NodeType == "start" {
-			n.State = "succeeded"
+	if run.SchemaVersion == 2 {
+		if err = graphCreateScopeV2(ctx, tx, &run, version.Definition, "", "", 0, input, false); err != nil {
+			return run, err
 		}
-		if n.NodeType == "agent" {
-			var number int64
-			if err = tx.QueryRow(ctx, `UPDATE workspace SET issue_counter=issue_counter+1 WHERE id=$1 RETURNING issue_counter`, ws).Scan(&number); err != nil {
-				return run, err
+	} else {
+		for _, node := range ordered {
+			n := GraphNodeRunRecord{ID: uuid.NewString(), NodeKey: node.Key, Label: node.Label, NodeType: string(node.Type), State: "pending", MaxAttempts: node.MaxAttempts, Attempts: []GraphAttemptRecord{}, Submissions: []GraphSubmissionRecord{}}
+			if n.NodeType == "start" {
+				n.State = "succeeded"
 			}
-			n.IssueID = uuid.NewString()
-			_, err = tx.Exec(ctx, `INSERT INTO issue(id,workspace_id,title,description,status,priority,assignee_type,assignee_id,creator_type,creator_id,parent_issue_id,project_id,number,position) SELECT $1,workspace_id,$3,$4,'todo','none','agent',$5,'member',$6,id,project_id,$7,0 FROM issue WHERE id=$2 AND workspace_id=$8`, n.IssueID, p.RootIssueID, version.Definition.Name+" · "+node.Key, node.Instructions, node.AgentID, user, number, ws)
-			if err != nil {
-				return run, err
+			if n.NodeType == "agent" {
+				var number int64
+				if err = tx.QueryRow(ctx, `UPDATE workspace SET issue_counter=issue_counter+1 WHERE id=$1 RETURNING issue_counter`, ws).Scan(&number); err != nil {
+					return run, err
+				}
+				n.IssueID = uuid.NewString()
+				_, err = tx.Exec(ctx, `INSERT INTO issue(id,workspace_id,title,description,status,priority,assignee_type,assignee_id,creator_type,creator_id,parent_issue_id,project_id,number,position) SELECT $1,workspace_id,$3,$4,'todo','none','agent',$5,'member',$6,id,project_id,$7,0 FROM issue WHERE id=$2 AND workspace_id=$8`, n.IssueID, p.RootIssueID, version.Definition.Name+" · "+node.Key, node.Instructions, node.AgentID, user, number, ws)
+				if err != nil {
+					return run, err
+				}
+				_, err = tx.Exec(ctx, `INSERT INTO graph_issue_owner(issue_id,workspace_id,run_id,node_run_id) VALUES($1,$2,$3,$4)`, n.IssueID, ws, run.ID, n.ID)
+				if err != nil {
+					return run, err
+				}
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO graph_issue_owner(issue_id,workspace_id,run_id,node_run_id) VALUES($1,$2,$3,$4)`, n.IssueID, ws, run.ID, n.ID)
-			if err != nil {
-				return run, err
-			}
+			run.Nodes = append(run.Nodes, n)
 		}
-		run.Nodes = append(run.Nodes, n)
 	}
 	b, err := graphJSON(run)
 	if err != nil {
@@ -190,7 +205,11 @@ OR EXISTS(SELECT 1 FROM autopilot_run WHERE issue_id=$1 AND status IN ('issue_cr
 		if n.IssueID != "" {
 			issueID = n.IssueID
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO graph_node_run(id,workspace_id,run_id,node_key,issue_id,state,document) VALUES($1,$2,$3,$4,$5,$6,$7)`, n.ID, ws, run.ID, n.NodeKey, issueID, n.State, nb)
+		key := n.NodeKey
+		if n.InstanceKey != "" {
+			key = n.InstanceKey
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO graph_node_run(id,workspace_id,run_id,node_key,issue_id,state,document) VALUES($1,$2,$3,$4,$5,$6,$7)`, n.ID, ws, run.ID, key, issueID, n.State, nb)
 		if err != nil {
 			return run, err
 		}
@@ -325,6 +344,24 @@ func (s *GraphService) Control(ctx context.Context, ws, user, id, action string,
 				continue
 			}
 			found = true
+			if run.SchemaVersion == 2 && n.NodeType == "http" {
+				if n.State != "blocked" || n.Effect == nil || n.Effect.State == "dispatched" {
+					return run, graphError("invalid_state", "only a stopped blocked HTTP invocation can retry")
+				}
+				if n.Effect.Attempts >= 3 {
+					return run, graphError("budget_exhausted", "HTTP attempt budget exhausted")
+				}
+				if strings.TrimSpace(p.Reason) == "" {
+					return run, graphError("retry_reason_required", "verify the remote outcome and provide a reason before retrying this HTTP invocation")
+				}
+				n.State = "ready"
+				n.BlockReason = ""
+				n.Effect.State = "retryable"
+				n.NextAttemptAt = nil
+				run.State = "active"
+				run.BlockReason = ""
+				continue
+			}
 			if action == "retry" && len(n.Attempts) == 0 {
 				return run, graphError("attempt_missing", "resolve the block before the first attempt")
 			}
@@ -348,6 +385,12 @@ func (s *GraphService) Control(ctx context.Context, ws, user, id, action string,
 	case "approver":
 		if role != "owner" && role != "admin" {
 			return run, graphError("forbidden", "administrator permission required")
+		}
+		if run.SchemaVersion == 2 {
+			if err = graphReplaceApproverV2(ctx, tx, &run, user, p); err != nil {
+				return run, err
+			}
+			break
 		}
 		if run.Approval == nil || (run.State != "waiting_approval" && run.BlockReason != "approver_unavailable") {
 			return run, graphError("invalid_state", "there is no pending approval")
@@ -417,6 +460,9 @@ func (s *GraphService) Approve(ctx context.Context, ws, user, id string, p Graph
 	}
 	if run.Revision != p.ExpectedRevision {
 		return run, graphError("revision_conflict", "run changed")
+	}
+	if run.SchemaVersion == 2 {
+		return s.approveV2(ctx, tx, run, member, user, p, hash)
 	}
 	if err = graphApprovalAllowed(run, member, p); err != nil {
 		return run, err

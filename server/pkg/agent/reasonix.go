@@ -91,7 +91,7 @@ func (b *reasonixBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -119,7 +119,7 @@ func (b *reasonixBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		return nil, fmt.Errorf("reasonix stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start reasonix: %w", err)
 	}
@@ -266,7 +266,13 @@ func (b *reasonixBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		// advertise. See the matching comment in hermes.go for the why —
 		// shipping an http/sse entry to a stdio-only runtime tanks the
 		// whole session/new.
+		frozenMCPCount := len(mcpServers)
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "reasonix", b.cfg)
+
+		if b.cfg.ReplaceEnvironment && len(mcpServers) != frozenMCPCount {
+			resCh <- Result{Status: "failed", Error: "runtime cannot load every frozen Graph MCP transport"}
+			return
+		}
 
 		// 2. Create or resume a session.
 		cwd := opts.Cwd
@@ -389,8 +395,12 @@ func (b *reasonixBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		// above, because reasonix derives the effort catalog from the current
 		// model and returns nothing from set_model. Say so, so the helper
 		// trusts the runtime's answer over a stale advertised list.
-		applyACPEffortOption(runCtx, c.request, "reasonix", b.cfg.Logger,
+		effortConfirmed := applyACPEffortOption(runCtx, c.request, "reasonix", b.cfg.Logger,
 			sessionID, sessionResult, opts.ThinkingLevel, opts.Model == "")
+		if b.cfg.ReplaceEnvironment && !effortConfirmed {
+			resCh <- Result{Status: "failed", Error: "runtime did not confirm frozen Graph reasoning effort"}
+			return
+		}
 
 		// 4. Send the prompt and wait for PromptResponse. Reasonix loads
 		// AGENTS.md from cwd, so the daemon deliberately does not duplicate the

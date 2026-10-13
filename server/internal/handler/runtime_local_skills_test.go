@@ -223,6 +223,31 @@ func TestInMemoryLocalSkillImportStore_TimesOutRunningRequests(t *testing.T) {
 	}
 }
 
+func TestInMemoryLocalSkillImportStorePreservesCreationOrderAtEqualClockTime(t *testing.T) {
+	ctx := context.Background()
+	for round := 0; round < 10; round++ {
+		store := NewInMemoryLocalSkillImportStore()
+		var ids []string
+		now := time.Now()
+		for _, key := range []string{"one", "two", "three"} {
+			req, err := store.Create(ctx, LocalSkillImportRequestInput{RuntimeID: "runtime", SkillKey: key})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.CreatedAt = now
+			ids = append(ids, req.ID)
+		}
+		first, err := store.PopPending(ctx, "runtime")
+		if err != nil || first.ID != ids[0] {
+			t.Fatalf("single pop lost FIFO for equal timestamps: %v", err)
+		}
+		batch, err := store.PopPendingBatch(ctx, "runtime", 2)
+		if err != nil || len(batch) != 2 || batch[0].ID != ids[1] || batch[1].ID != ids[2] {
+			t.Fatalf("batch lost FIFO for equal timestamps: %v", err)
+		}
+	}
+}
+
 // Capability discovery (list + poll) is readable by any workspace member so
 // the Agent capabilities surfaces work for agents bound to someone else's
 // runtime. Import stays owner-only (tests below).
