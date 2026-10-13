@@ -65,9 +65,28 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	if identity.DaemonID != "" {
 		reqCtx = middleware.WithDaemonContext(reqCtx, identity.PrimaryWorkspaceID(), identity.DaemonID)
 	}
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, "/api/daemon/tasks/claim", bytes.NewReader(body))
+	req, err := newRPCClaimRequest(reqCtx, identity, body)
 	if err != nil {
 		return http.StatusInternalServerError, nil, err
+	}
+
+	rec := &rpcResponseCapture{}
+	h.ClaimTasksByRuntime(rec, req)
+	status := rec.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return status, json.RawMessage(rec.body.Bytes()), nil
+}
+
+// newRPCClaimRequest rebuilds the HTTP claim request a WS connection stands in
+// for. Every header the claim path reads must be forwarded from the identity
+// captured at connect; Graph claims in particular bind an attempt to
+// X-Daemon-Instance-ID and refuse a claim without it.
+func newRPCClaimRequest(ctx context.Context, identity daemonws.ClientIdentity, body json.RawMessage) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/daemon/tasks/claim", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if identity.UserID != "" {
@@ -79,12 +98,8 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	if identity.ClientVersion != "" {
 		req.Header.Set("X-Client-Version", identity.ClientVersion)
 	}
-
-	rec := &rpcResponseCapture{}
-	h.ClaimTasksByRuntime(rec, req)
-	status := rec.status
-	if status == 0 {
-		status = http.StatusOK
+	if identity.InstanceID != "" {
+		req.Header.Set("X-Daemon-Instance-ID", identity.InstanceID)
 	}
-	return status, json.RawMessage(rec.body.Bytes()), nil
+	return req, nil
 }
