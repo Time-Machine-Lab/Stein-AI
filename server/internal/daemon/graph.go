@@ -170,7 +170,7 @@ func buildGraphPrompt(task Task) string {
 		fmt.Fprintf(&b, "The repository has already been checked out beneath the task working directory at input commit %s. Work in that checkout; do not replace the input ref.\n", task.Graph.NodeSpec.Repository.CommitSHA)
 	}
 	if task.Graph.NodeSpec.Node.ExecutionMode == graph.ExecutionProduceCommit {
-		fmt.Fprintf(&b, "Commit your completed code explicitly and declare that exact SHA in a git_commit artifact. Its managed_ref must be %s, repository_id %s, producer_task_id %s, and base_sha %s. The daemon publishes it after you exit; do not push the managed ref yourself.\n", graphManagedRef(task), task.Graph.NodeSpec.Repository.RepositoryID, task.ID, task.Graph.NodeSpec.Repository.CommitSHA)
+		fmt.Fprintf(&b, "Commit your completed code explicitly and declare that exact SHA in a git_commit artifact. Give the artifact a freshly generated UUID as its id (not the commit SHA). Its managed_ref must be %s, repository_id %s, producer_task_id %s, and base_sha %s. The daemon publishes it after you exit; do not push the managed ref yourself.\n", graphManagedRef(task), task.Graph.NodeSpec.Repository.RepositoryID, task.ID, task.Graph.NodeSpec.Repository.CommitSHA)
 	}
 	if task.Graph.NodeSpec.Node.ExecutionMode == graph.ExecutionVerifyCommit {
 		b.WriteString("Keep HEAD at the input candidate and leave the checkout clean. Return tested_commit_sha equal to that input commit.\n")
