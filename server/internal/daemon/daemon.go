@@ -6390,9 +6390,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentMcpConfig = task.Agent.McpConfig
 		effectiveMcpConfig = agentMcpConfig
 		if task.Graph != nil {
-			if len(effectiveMcpConfig) == 0 || string(effectiveMcpConfig) == "null" {
-				effectiveMcpConfig = json.RawMessage(`{"mcpServers":{}}`)
-			}
+			effectiveMcpConfig = normalizeGraphMcpConfig(effectiveMcpConfig)
 		} else if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, agentMcpConfig); mergeErr != nil {
 			taskLog.Warn("mcp_config: runtime merge failed; using agent configuration only",
 				"provider", provider,
@@ -8715,4 +8713,28 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 		return nil
 	}
 	return append([]string(nil), args...)
+}
+
+// normalizeGraphMcpConfig makes a frozen Graph MCP configuration safe to hand to
+// a provider CLI. An absent or null configuration becomes an empty server set,
+// and an object that omits mcpServers gains an empty record: Claude rejects a
+// config without one ("mcpServers: expected record, received undefined"), and a
+// published agent with no MCP servers freezes as `{}`.
+func normalizeGraphMcpConfig(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return json.RawMessage(`{"mcpServers":{}}`)
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return raw
+	}
+	if _, ok := top["mcpServers"]; ok {
+		return raw
+	}
+	top["mcpServers"] = json.RawMessage(`{}`)
+	normalized, err := json.Marshal(top)
+	if err != nil {
+		return raw
+	}
+	return normalized
 }
