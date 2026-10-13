@@ -74,7 +74,8 @@ export function graphIssueSearchOptions(wsId: string, q: string) {
     queryKey: graphKeys.issueSearch(wsId, q),
     queryFn: ({ signal }) =>
       api.searchIssues({ q, limit: 30, include_closed: false, signal }),
-    enabled: Boolean(wsId),
+    // The search endpoint rejects an empty q, so wait for the user to type.
+    enabled: Boolean(wsId && q.trim()),
     staleTime: 30_000,
   });
 }

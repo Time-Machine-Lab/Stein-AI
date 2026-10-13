@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../api/client";
-import { graphKeys } from "./queries";
+import { graphIssueSearchOptions, graphKeys } from "./queries";
 import {
   canApproveGraphRun,
   canDetachGraphRun,
@@ -408,5 +408,16 @@ describe("serial step editor model", () => {
         }),
       ),
     ).toThrow("V1 limits");
+  });
+});
+
+describe("graph issue search", () => {
+  it("does not query the server until the user has typed something", () => {
+    // /api/issues/search rejects an empty q with 400, and the start form mounts
+    // with an empty search box, so an enabled empty query surfaces a bogus error.
+    expect(graphIssueSearchOptions("ws", "").enabled).toBe(false);
+    expect(graphIssueSearchOptions("ws", "   ").enabled).toBe(false);
+    expect(graphIssueSearchOptions("ws", "login bug").enabled).toBe(true);
+    expect(graphIssueSearchOptions("", "login bug").enabled).toBe(false);
   });
 });
