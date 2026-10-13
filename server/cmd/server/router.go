@@ -1238,11 +1238,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/recover-orphans", h.RecoverOrphanedTasks)
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
+		r.Get("/tasks/{taskId}/graph-submission", h.GraphDaemonSubmission)
+		r.Post("/tasks/{taskId}/graph-stopped", h.GraphDaemonStopped)
 	})
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(h.GraphTaskTokenScope)
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// --- User-scoped routes (no workspace context required) ---
@@ -1548,6 +1551,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Use(middleware.RequireWorkspaceMember(queries))
 
 			// Assignee frequency
+			r.Get("/api/graphs", h.ListGraphs)
+			r.Post("/api/graphs", h.CreateGraph)
+			r.Get("/api/graphs/{graphId}", h.GetGraph)
+			r.Put("/api/graphs/{graphId}", h.UpdateGraph)
+			r.Post("/api/graphs/{graphId}/validate", h.ValidateGraph)
+			r.Post("/api/graphs/{graphId}/publish", h.PublishGraph)
+			r.Post("/api/graphs/{graphId}/archive", h.ArchiveGraph)
+			r.Get("/api/graph-runs", h.ListGraphRuns)
+			r.Post("/api/graph-runs", h.StartGraphRun)
+			r.Get("/api/graph-runs/{runId}", h.GetGraphRun)
+			r.Post("/api/graph-runs/{runId}/approval", h.ApproveGraphRun)
+			r.Post("/api/graph-runs/{runId}/{action}", h.ControlGraphRun)
+			r.Get("/api/graph/node/context", h.GraphNodeContext)
+			r.Post("/api/graph/node/submissions", h.SubmitGraphNode)
+			r.Post("/api/graph/node/block", h.BlockGraphNode)
+
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
 			// Issues
@@ -1584,6 +1603,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/active-task", h.GetActiveTaskForIssue)
 					r.Post("/tasks/{taskId}/cancel", h.CancelTask)
 					r.Post("/rerun", h.RerunIssue)
+					r.Post("/graph-detach", h.DetachGraphIssue)
 					r.Post("/quick-actions/{quickActionId}/run", h.RunQuickAction)
 					r.Post("/quick-actions/{quickActionId}/render", h.RenderQuickAction)
 					r.Get("/task-runs", h.ListTasksByIssue)

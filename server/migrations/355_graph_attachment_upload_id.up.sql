@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY graph_attachment_upload_id ON graph_attachment_upload(attachment_id);

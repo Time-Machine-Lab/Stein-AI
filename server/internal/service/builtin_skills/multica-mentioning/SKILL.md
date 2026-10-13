@@ -16,6 +16,21 @@ Every claim below is pinned to source in
 `references/mentioning-source-map.md`. If behavior ever differs from this
 document, the source map is where to re-check it.
 
+## Graph exception
+
+Graph-managed issues use their published node sequence for execution. A comment
+or mention does not schedule another Graph attempt. Inside a Graph node, do not
+delegate, trigger another agent or fetch fresh comments to alter its fixed
+input. Use `multica graph node context --output json` and submit the node's
+structured result with `multica graph node submit --result-file <path>`; use
+`multica graph node block --reason-file <path>` for an environment blocker.
+Use `multica graph node comment --body <text>` for a diagnostic comment on the
+current node issue, or `--body-file <path>` for a UTF-8 body in the task workdir.
+This command gets the issue identity from scoped Graph context without reading
+the live issue. Such comments neither change the fixed input nor trigger work.
+The scoped credential does not grant ordinary issue reads or delegation APIs.
+The mention routing rules below describe ordinary issues.
+
 ## A mention link is built from a real UUID
 
 The backend recognizes a mention only through this Markdown shape:

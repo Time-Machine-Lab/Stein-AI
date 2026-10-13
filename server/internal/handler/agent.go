@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	"github.com/multica-ai/multica/server/internal/graph"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -309,6 +310,9 @@ type ActiveSiblingRunData struct {
 }
 
 type AgentTaskResponse struct {
+	GraphManifest           *graph.AttemptManifest               `json:"graph_manifest,omitempty"`
+	GraphManifestHash       string                               `json:"graph_manifest_hash,omitempty"`
+	GraphRootSnapshot       json.RawMessage                      `json:"graph_root_snapshot,omitempty"`
 	ID                      string                               `json:"id"`
 	AgentID                 string                               `json:"agent_id"`
 	RuntimeID               string                               `json:"runtime_id"`

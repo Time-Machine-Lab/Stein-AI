@@ -1,5 +1,25 @@
 # working-on-issues source map
 
+## Graph V1 exception (2026-10-13)
+
+- `server/cmd/multica/cmd_graph.go`: `newGraphCommand` defines human management
+  and task-scoped node commands; `graphCLIClient` separates credentials;
+  `submitGraphNodeResult` binds and validates identity, validates result schema,
+  and derives a stable replay key before posting to `/api/graph/node/submissions`.
+- `server/internal/handler/graph_scope.go`: `GraphTaskTokenScope` checks current
+  attempt ownership and rejects routes outside the scoped allowlist in
+  `graph_scope_policy.go`.
+- `server/internal/handler/graph_issue.go`: `graphProtectedIssueFields` and
+  `rejectGraphIssueMutation` protect Graph-owned issues;
+  `hydrateGraphIssues` exposes the ownership markers.
+- `server/internal/handler/comment.go`: `computeCommentAgentTriggers` returns without
+  enqueueing when `graphOwnsIssue` is true. `server/internal/handler/github.go`
+  skips ordinary close-intent status advancement for Graph-owned issues.
+- `server/internal/daemon/graph.go`: `buildGraphPrompt`, `finalizeGraphGit` and
+  `finalizeGraphTask` define structured delivery and stopped receipts.
+- `server/internal/graph/result.go`: `ValidateResult` enforces execution-mode
+  artifacts, output schema, diagnostics and the tested candidate SHA.
+
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`
 after the latest `main` merge; the prior skill cited pre-merge lines that have

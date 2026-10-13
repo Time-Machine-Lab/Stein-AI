@@ -3,6 +3,8 @@ package protocol
 import "encoding/json"
 
 const (
+	DaemonCapabilityGraphExecutionV1    = "graph-execution-v1"
+	CLICapabilityGraphNodeSubmitV1      = "graph-node-submit-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
 	DaemonCapabilityExecutionManifestV1 = "execution-manifest-v1"

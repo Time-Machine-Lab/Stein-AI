@@ -56,6 +56,7 @@ import { useStatusLabel, useTriggerText } from "./task-run-labels";
 
 interface ExecutionLogSectionProps {
   issueId: string;
+  graphManaged?: boolean;
   /** Shown in the usage dialog's subtitle so the panel names what it totals. */
   identifier?: string;
 }
@@ -69,7 +70,7 @@ const PAST_STATUS_RANK: Record<string, number> = {
   completed: 2,
 };
 
-export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSectionProps) {
+export function ExecutionLogSection({ issueId, identifier, graphManaged = false }: ExecutionLogSectionProps) {
   const { t } = useT("issues");
   const [open, setOpen] = useState(true);
   const [showPast, setShowPast] = useState(false);
@@ -170,7 +171,7 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
       {open && (
         <div className="space-y-0.5 pl-2">
           {activeTasks.map((task) => (
-            <ActiveTaskRow key={task.id} task={task} issueId={issueId} />
+            <ActiveTaskRow key={task.id} task={task} issueId={issueId} graphManaged={graphManaged} />
           ))}
 
           {pastTasks.length > 0 && (
@@ -195,7 +196,7 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
               {showPast && (
                 <div className="mt-0.5 space-y-0.5">
                   {pastTasks.map((task) => (
-                    <PastRow key={task.id} task={task} issueId={issueId} />
+                    <PastRow key={task.id} task={task} issueId={issueId} graphManaged={graphManaged} />
                   ))}
                 </div>
               )}
@@ -308,12 +309,15 @@ export function ActiveTaskRow({
   task,
   issueId,
   onTranscriptOpenChange,
+  graphManaged = false,
 }: {
   task: AgentTask;
   issueId: string;
   onTranscriptOpenChange?: (open: boolean) => void;
+  graphManaged?: boolean;
 }) {
   const { t } = useT("issues");
+  const { t: graphT } = useT("graphs");
   const [cancelling, setCancelling] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const tone = STATUS_TONE[task.status];
@@ -342,7 +346,7 @@ export function ActiveTaskRow({
     task.status !== "queued" && task.status !== "waiting_local_directory";
 
   const handleCancel = async () => {
-    if (cancelling) return;
+    if (cancelling || graphManaged) return;
     setCancelling(true);
     try {
       await api.cancelTask(issueId, task.id);
@@ -353,7 +357,7 @@ export function ActiveTaskRow({
   };
 
   const requestCancel = () => {
-    if (cancelling) return;
+    if (cancelling || graphManaged) return;
     setConfirmOpen(true);
   };
 
@@ -394,7 +398,7 @@ export function ActiveTaskRow({
               <button
                 type="button"
                 onClick={requestCancel}
-                disabled={cancelling}
+                disabled={cancelling || graphManaged}
                 aria-label={t(($) => $.execution_log.cancel_task_aria)}
               />
             }
@@ -406,7 +410,7 @@ export function ActiveTaskRow({
               <Square className="h-3.5 w-3.5" />
             )}
           </TooltipTrigger>
-          <TooltipContent>{t(($) => $.execution_log.cancel_task_tooltip)}</TooltipContent>
+          <TooltipContent>{graphManaged ? graphT(($) => $.run.graph_managed) : t(($) => $.execution_log.cancel_task_tooltip)}</TooltipContent>
         </Tooltip>
       </RowActions>
       <TerminateTaskConfirmDialog
@@ -425,7 +429,7 @@ export function ActiveTaskRow({
 
 // ─── Past row ──────────────────────────────────────────────────────────────
 
-function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
+function PastRow({ task, issueId, graphManaged = false }: { task: AgentTask; issueId: string; graphManaged?: boolean }) {
   const { t } = useT("issues");
   const timeAgo = useTimeAgo();
   const [retrying, setRetrying] = useState(false);
@@ -472,10 +476,10 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   // endpoint would fall back to the issue's current assignee and the
   // wrong agent would fire on rows whose agent has since been displaced
   // (e.g. reassignment, squad worker, or a one-off @-mention agent).
-  const canRetry = task.status === "failed" || task.status === "cancelled";
+  const canRetry = !graphManaged && (task.status === "failed" || task.status === "cancelled");
 
   const handleRetry = async () => {
-    if (retrying) return;
+    if (retrying || graphManaged) return;
     setRetrying(true);
     try {
       await api.rerunIssue(issueId, task.id);

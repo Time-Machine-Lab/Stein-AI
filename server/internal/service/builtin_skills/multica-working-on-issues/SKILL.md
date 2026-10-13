@@ -16,6 +16,46 @@ For building mention links, load `multica-mentioning` instead — not this skill
 Every contract below is traced to source in
 `references/working-on-issues-source-map.md`.
 
+## Graph-managed issues
+
+When issue context contains `execution_mode: "graph"`, `graph_run_id`, or
+`graph_node_run_id`, Graph owns execution, retry, parent completion and approval.
+The ordinary status, PR-close and delegation guidance below does not advance
+that run. Do not change its status, parent, assignee or execution metadata.
+
+Inside a Graph node, read only the frozen context and submit its structured
+result using the current task credential:
+
+```bash
+multica graph node context --output json
+multica graph node submit --result-file /path/to/result.json --output json
+multica graph node block --reason-file /path/to/diagnostics.json --output json
+```
+
+For a node without code artifacts, a passing result is
+`{"outcome":"pass","output":{"summary":"Completed"}}`, with `output` matching
+the node's declared schema. The CLI binds omitted identity to the current
+attempt; it rejects a supplied identity from another attempt. The block file
+is a nonempty diagnostics object, for example
+`{"reason":"Required test service unavailable"}`. Keep result files outside
+the repository checkout. An unchanged result reuses a stable idempotency key.
+
+For `produce_commit`, commit locally and declare the exact `git_commit` artifact
+described in the execution manifest and prompt; the daemon verifies and pushes
+the managed ref after execution stops. For `verify_commit`, keep HEAD at the
+frozen candidate, leave the checkout clean and return its `tested_commit_sha`.
+Do not replace structured submission with a comment, PR, exit code or a manual
+issue status change. Submission is staged: submit once, then exit so the daemon
+can provide its stopped receipt and the engine can validate the result.
+
+Human operators use `multica graph list`, `graph get <run-id>`, `graph run`, and
+the revision-checked control commands. Check `multica graph --help` and each
+command's help for flags. Mutations require an explicit `--idempotency-key`;
+reuse it only for the identical request. Commands changing a saved revision
+also require `--expected-revision` from a fresh read. Approvals additionally
+bind `--approval-id` and `--candidate-digest`. Graph task credentials cannot
+use these management commands.
+
 ## PR linking and close intent are two distinct contracts
 
 The GitHub webhook runs two separate scans over an incoming PR. They are not the

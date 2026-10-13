@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/multica-ai/multica/server/internal/graph"
 )
 
 func newAttachmentDownloadTestCmd() *cobra.Command {
@@ -193,6 +197,65 @@ func TestRunAttachmentUploadSendsTaskIDAndPrintsContract(t *testing.T) {
 	}
 }
 
+func TestRunAttachmentUploadPreservesGraphArtifactMetadata(t *testing.T) {
+	for _, fixture := range []struct{ name, body string }{{"nonempty attachment", "Graph verification evidence"}, {"empty attachment", ""}} {
+		t.Run(fixture.name, func(t *testing.T) {
+			body := fixture.body
+			const taskID = "graph-task-1"
+			const mediaType = "text/plain"
+			digest := sha256.Sum256([]byte(body))
+			contentHash := hex.EncodeToString(digest[:])
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/upload-file" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
+					t.Errorf("parse multipart: %v", err)
+					return
+				}
+				if got := r.FormValue("task_id"); got != taskID {
+					t.Errorf("task_id = %q, want current Graph task", got)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "graph-attachment-1", "filename": "evidence.txt",
+					"content_hash": contentHash, "size_bytes": int64(len(body)), "content_type": mediaType,
+					"markdown_url": "https://public.example/api/attachments/graph-attachment-1/download",
+				})
+			}))
+			defer srv.Close()
+			setCLITestServerEnv(t, srv.URL)
+			t.Setenv("MULTICA_TOKEN", "mat_graph-test-token")
+			t.Setenv("MULTICA_TASK_ID", taskID)
+			path := filepath.Join(t.TempDir(), "evidence.txt")
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := captureStdout(t, func() error { return runAttachmentUpload(newAttachmentUploadTestCmd(), []string{path}) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(out), &output); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"id", "filename", "markdown_url", "markdown", "content_hash", "size", "media_type"} {
+				if _, ok := output[field]; !ok {
+					t.Errorf("upload output missing %s", field)
+				}
+			}
+			var artifact graph.Artifact
+			if err := json.Unmarshal([]byte(out), &artifact); err != nil {
+				t.Fatalf("output metadata must decode as Graph artifact fields: %v", err)
+			}
+			if artifact.ID != "graph-attachment-1" || artifact.ContentHash != contentHash || artifact.Size != int64(len(body)) || artifact.MediaType != mediaType {
+				t.Errorf("Graph artifact metadata mismatch: %+v", artifact)
+			}
+		})
+	}
+}
+
 // TestRunAttachmentUploadNonImageUsesFileCardMarkdown covers the content-type
 // branch: a non-image file emits the block-level `!file[...]( )` card snippet,
 // not image `![...]` markdown.
@@ -293,7 +356,7 @@ func TestRunAttachmentUploadRequiresTask(t *testing.T) {
 	}
 
 	cmd := newAttachmentUploadTestCmd() // no --task, no MULTICA_TASK_ID
-	if err := runAttachmentUpload(cmd, []string{imgPath}); err == nil || !strings.Contains(err.Error(), "no chat task in context") {
+	if err := runAttachmentUpload(cmd, []string{imgPath}); err == nil || !strings.Contains(err.Error(), "no task in context") {
 		t.Fatalf("runAttachmentUpload error = %v, want no-chat-task error", err)
 	}
 }

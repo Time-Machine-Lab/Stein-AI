@@ -23,8 +23,10 @@ type Backend interface {
 
 // ExecOptions configures a single execution.
 type ExecOptions struct {
-	Cwd   string
-	Model string
+	// DisableWholeRunRetry gives Graph sole ownership of whole-execution attempts.
+	DisableWholeRunRetry bool
+	Cwd                  string
+	Model                string
 	// SystemPrompt carries the Multica runtime brief for the few providers
 	// that cannot pick it up from disk. The daemon leaves it empty for every
 	// other provider (see daemon.providerNeedsInlineSystemPrompt), because the
@@ -192,12 +194,14 @@ const CostUSDTicksPerUSD = 10_000_000_000
 
 // Result is the final outcome after an agent session completes.
 type Result struct {
-	Status     string // "completed", "failed", "aborted", "timeout", "cancelled"
-	Output     string // final user-facing output selected by the backend
-	Error      string // error message if failed
-	DurationMs int64
-	SessionID  string
-	Usage      map[string]TokenUsage // keyed by model name
+	// ExecutionStopped is physical process-tree evidence; nil means the backend cannot attest it.
+	ExecutionStopped *bool
+	Status           string // "completed", "failed", "aborted", "timeout", "cancelled"
+	Output           string // final user-facing output selected by the backend
+	Error            string // error message if failed
+	DurationMs       int64
+	SessionID        string
+	Usage            map[string]TokenUsage // keyed by model name
 	// ResumeRejected is positive evidence that this run's requested resume
 	// was itself refused — the transcript is gone, the session belongs to
 	// another provider account, OR the session still exists but its history
@@ -245,11 +249,14 @@ type Config struct {
 	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw)
 	CLIVersion     string            // detected version paired with ExecutablePath; observation only, never used to choose behavior
 	Env            map[string]string // extra environment variables
-	Logger         *slog.Logger
-	TaskID         string
-	RuntimeID      string
-	DaemonVersion  string
-	CodexVersion   string
+	// ReplaceEnvironment uses exactly Env rather than inheriting the daemon environment (Graph Codex adapter).
+	ReplaceEnvironment bool
+	GraphSkillPaths    []string
+	Logger             *slog.Logger
+	TaskID             string
+	RuntimeID          string
+	DaemonVersion      string
+	CodexVersion       string
 	// BuiltinRuntime reports that ExecutablePath is the provider's own
 	// discovered binary rather than a custom runtime profile's command. A
 	// custom profile keeps its protocol family as the provider, so the

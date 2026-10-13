@@ -999,6 +999,9 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 
 // renderIssueContext builds the markdown content for issue_context.md.
 func renderIssueContext(provider string, ctx TaskContextForEnv) string {
+	if ctx.GraphInstructions != "" {
+		return ctx.GraphInstructions
+	}
 	if ctx.AutopilotRunID != "" {
 		return renderAutopilotContext(ctx)
 	}

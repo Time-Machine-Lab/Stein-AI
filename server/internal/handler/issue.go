@@ -32,21 +32,24 @@ import (
 
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
-	ID            string  `json:"id"`
-	WorkspaceID   string  `json:"workspace_id"`
-	Number        int32   `json:"number"`
-	Identifier    string  `json:"identifier"`
-	Title         string  `json:"title"`
-	Description   *string `json:"description"`
-	Status        string  `json:"status"`
-	Priority      string  `json:"priority"`
-	AssigneeType  *string `json:"assignee_type"`
-	AssigneeID    *string `json:"assignee_id"`
-	CreatorType   string  `json:"creator_type"`
-	CreatorID     string  `json:"creator_id"`
-	ParentIssueID *string `json:"parent_issue_id"`
-	ProjectID     *string `json:"project_id"`
-	Position      float64 `json:"position"`
+	ExecutionMode  string  `json:"execution_mode,omitempty"`
+	GraphRunID     string  `json:"graph_run_id,omitempty"`
+	GraphNodeRunID string  `json:"graph_node_run_id,omitempty"`
+	ID             string  `json:"id"`
+	WorkspaceID    string  `json:"workspace_id"`
+	Number         int32   `json:"number"`
+	Identifier     string  `json:"identifier"`
+	Title          string  `json:"title"`
+	Description    *string `json:"description"`
+	Status         string  `json:"status"`
+	Priority       string  `json:"priority"`
+	AssigneeType   *string `json:"assignee_type"`
+	AssigneeID     *string `json:"assignee_id"`
+	CreatorType    string  `json:"creator_type"`
+	CreatorID      string  `json:"creator_id"`
+	ParentIssueID  *string `json:"parent_issue_id"`
+	ProjectID      *string `json:"project_id"`
+	Position       float64 `json:"position"`
 	// Stage groups sub-issues under the same parent into ordered barrier
 	// groups (null = unstaged). See issue_child_done.go for how a closed
 	// stage gates the child-done -> parent wake.
@@ -778,6 +781,11 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
+	graphRefs := make([]*IssueResponse, len(resp))
+	for i := range resp {
+		graphRefs[i] = &resp[i].IssueResponse
+	}
+	h.hydrateGraphIssues(ctx, graphRefs)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
 		"total":  total,
@@ -1295,6 +1303,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		resp[i].Labels = &labels
 	}
 
+	h.hydrateGraphIssueSlice(ctx, resp)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
 		"total":  total,
@@ -1887,6 +1896,13 @@ ORDER BY
 		groups[idx].Issues = append(groups[idx].Issues, issue)
 	}
 
+	graphRefs := []*IssueResponse{}
+	for i := range groups {
+		for j := range groups[i].Issues {
+			graphRefs = append(graphRefs, &groups[i].Issues[j])
+		}
+	}
+	h.hydrateGraphIssues(ctx, graphRefs)
 	writeJSON(w, http.StatusOK, GroupedIssuesResponse{Groups: groups})
 }
 
@@ -1898,6 +1914,7 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	h.hydrateGraphIssues(r.Context(), []*IssueResponse{&resp})
 	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
 	if detailLabels == nil {
 		detailLabels = []LabelResponse{}
@@ -1955,6 +1972,7 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		resp[i].Labels = &labels
 	}
+	h.hydrateGraphIssueSlice(r.Context(), resp)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
 	})
@@ -2034,6 +2052,7 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 		}
 		resp[i].Labels = &labels
 	}
+	h.hydrateGraphIssueSlice(r.Context(), resp)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
 	})
@@ -2899,6 +2918,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// Track which fields were explicitly present in JSON (even if null)
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
+	if graphProtectedIssueFields(rawFields) && h.rejectGraphIssueMutation(w, r, prevIssue) {
+		return
+	}
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
@@ -3094,6 +3116,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
+	h.hydrateGraphIssues(r.Context(), []*IssueResponse{&resp})
 
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
 		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
@@ -3371,6 +3394,9 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.rejectGraphIssueMutation(w, r, issue) {
+		return
+	}
 	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
 	h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
@@ -3466,6 +3492,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	var rawUpdates map[string]json.RawMessage
 	if raw, exists := rawTop["updates"]; exists {
 		json.Unmarshal(raw, &rawUpdates)
+	}
+	if graphProtectedIssueFields(rawUpdates) && h.rejectGraphBatchMutation(w, r, req.IssueIDs) {
+		return
 	}
 
 	// Short-circuit when no mutation field is present in `updates`. Without
@@ -3795,6 +3824,9 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deleted := 0
+	if h.rejectGraphBatchMutation(w, r, req.IssueIDs) {
+		return
+	}
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {

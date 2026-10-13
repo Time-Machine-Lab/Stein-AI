@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -91,9 +92,10 @@ func isRuntimeNotFoundError(err error) bool {
 
 // Client handles HTTP communication with the Multica server daemon API.
 type Client struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	instanceID string
+	baseURL    string
+	token      string
+	client     *http.Client
 
 	// bundleClient downloads skill bundles. Unlike client it carries no fixed
 	// Timeout: bundles can be large and slow on jittery links, so the caller
@@ -120,6 +122,7 @@ type Client struct {
 // NewClient creates a new daemon API client.
 func NewClient(baseURL string) *Client {
 	return &Client{
+		instanceID:   uuid.NewString(),
 		baseURL:      baseURL,
 		client:       &http.Client{Timeout: 30 * time.Second, Transport: cloneDefaultTransport()},
 		bundleClient: &http.Client{},
@@ -168,6 +171,9 @@ func (c *Client) SetVersion(v string) {
 
 // setIdentityHeaders attaches X-Client-Platform/Version/OS to req when set.
 func (c *Client) setIdentityHeaders(req *http.Request) {
+	if c.instanceID != "" {
+		req.Header.Set("X-Daemon-Instance-ID", c.instanceID)
+	}
 	if c.platform != "" {
 		req.Header.Set("X-Client-Platform", c.platform)
 	}
@@ -194,6 +200,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityRemoteMCPV1,
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilityRPCV1,
+		protocol.DaemonCapabilityGraphExecutionV1,
 	}, ",")
 }
 
@@ -361,6 +368,7 @@ func (c *Client) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID, reas
 
 // TaskCancelAck is the payload of the daemon's cancel acknowledgement.
 type TaskCancelAck struct {
+	GraphReceipt *GraphTaskReceipt
 	// BranchName: a cancelled worktree task has already finalized — its
 	// partial work is committed to a branch in the user's repo. The cancel
 	// path discards the rest of the result, so this ack is the only channel
@@ -387,6 +395,9 @@ type TaskCancelAck struct {
 // The server never overwrites already-recorded values, so replays are safe.
 func (c *Client) AckTaskCancelled(ctx context.Context, taskID string, ack TaskCancelAck) error {
 	body := map[string]any{}
+	if ack.GraphReceipt != nil {
+		body["graph_receipt"] = ack.GraphReceipt
+	}
 	if ack.BranchName != "" {
 		body["branch_name"] = ack.BranchName
 	}
@@ -423,8 +434,11 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) error {
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, graphReceipts ...*GraphTaskReceipt) error {
 	body := map[string]any{"output": output}
+	if len(graphReceipts) > 0 && graphReceipts[0] != nil {
+		body["graph_receipt"] = graphReceipts[0]
+	}
 	if branchName != "" {
 		body["branch_name"] = branchName
 	}
@@ -452,8 +466,11 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	}, nil)
 }
 
-func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID string) error {
+func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID string, graphReceipts ...*GraphTaskReceipt) error {
 	body := map[string]any{"error": errMsg}
+	if len(graphReceipts) > 0 && graphReceipts[0] != nil {
+		body["graph_receipt"] = graphReceipts[0]
+	}
 	if sessionID != "" {
 		body["session_id"] = sessionID
 	}

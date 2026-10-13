@@ -579,6 +579,7 @@ SELECT
     p.chat_input_task_id, sqlc.narg(fire_at)
 FROM agent_task_queue p
 WHERE p.id = $1
+  AND NOT EXISTS (SELECT 1 FROM graph_task_attempt WHERE task_id=p.id)
   AND lock_task_owner_rows(p.agent_id, p.issue_id, p.runtime_id)
 RETURNING *;
 
@@ -669,6 +670,7 @@ SET status = 'dispatched',
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.agent_id = $1 AND atq.status = 'queued'
+      AND graph_task_claim_allowed(atq.id)
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
@@ -748,6 +750,7 @@ WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = $1
       AND atq.status = 'dispatched'
+      AND graph_task_claim_allowed(atq.id)
       AND atq.started_at IS NULL
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
@@ -772,6 +775,7 @@ WHERE id IN (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
       AND atq.status = 'dispatched'
+      AND graph_task_claim_allowed(atq.id)
       AND atq.started_at IS NULL
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
@@ -1483,6 +1487,7 @@ WHERE id = (
     SELECT t.id FROM agent_task_queue t
     WHERE t.issue_id = @issue_id
       AND t.agent_id = @agent_id
+      AND NOT EXISTS (SELECT 1 FROM graph_task_attempt WHERE task_id=t.id)
       AND (
           t.status = 'queued'
           OR (t.status = 'deferred' AND t.context->>'channel_issue_media_pending' = 'true')
@@ -1536,6 +1541,7 @@ WHERE id = (
     WHERE t.issue_id = @issue_id
       AND t.agent_id = @agent_id
       AND t.status IN ('dispatched', 'running', 'waiting_local_directory')
+      AND NOT EXISTS (SELECT 1 FROM graph_task_attempt WHERE task_id=t.id)
       AND (
           COALESCE(sqlc.narg('head_sha')::text, '') = ''
           OR t.context->>'head_sha' = sqlc.narg('head_sha')::text
@@ -1589,6 +1595,7 @@ ORDER BY priority DESC, created_at ASC;
 -- idx_agent_task_queue_claim_candidates so the warm path is cheap.
 SELECT * FROM agent_task_queue
 WHERE runtime_id = $1 AND status = 'queued'
+  AND NOT EXISTS (SELECT 1 FROM graph_task_attempt ga JOIN graph_run gr ON gr.id=ga.run_id WHERE ga.task_id=agent_task_queue.id AND (gr.state<>'active' OR gr.control_state<>'run'))
 ORDER BY priority DESC, created_at ASC;
 
 -- name: PromoteDueDeferredTasksForRuntime :many
@@ -1612,6 +1619,7 @@ RETURNING *;
 -- candidate set is small, so this is cheap in practice.
 SELECT * FROM agent_task_queue
 WHERE runtime_id = ANY(@runtime_ids::uuid[]) AND status = 'queued'
+  AND NOT EXISTS (SELECT 1 FROM graph_task_attempt ga JOIN graph_run gr ON gr.id=ga.run_id WHERE ga.task_id=agent_task_queue.id AND (gr.state<>'active' OR gr.control_state<>'run'))
 ORDER BY priority DESC, created_at ASC;
 
 -- name: PromoteDueDeferredTasksForRuntimes :many

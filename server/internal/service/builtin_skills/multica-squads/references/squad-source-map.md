@@ -283,3 +283,12 @@ Verification command:
 ```bash
 go test ./internal/handler -run 'Test.*Squad|Test.*squad|Test.*Autopilot.*Squad|Test.*ChildDone.*Squad'
 ```
+# Graph V1 exception (2026-10-13)
+
+`server/internal/graph/definition.go` validates a serial sequence of agent
+nodes, one final approval and end. `server/internal/daemon/graph.go`
+(`validateGraphTask`) rejects squad/leader, prior session and unrelated task
+contexts. `buildGraphPrompt` says Graph owns scheduling and issue state.
+`server/internal/handler/graph_scope_policy.go` rejects ordinary delegation
+routes for Graph tasks. `server/cmd/multica/cmd_graph.go` implements the scoped
+node context/result/block commands.

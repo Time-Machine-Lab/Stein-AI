@@ -115,9 +115,10 @@ type PrepareParams struct {
 
 // TaskContextForEnv is the subset of task context used for writing context files.
 type TaskContextForEnv struct {
-	IssueID          string
-	TriggerCommentID string // comment that triggered this task (empty for on_assign)
-	TriggerThreadID  string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
+	GraphInstructions string
+	IssueID           string
+	TriggerCommentID  string // comment that triggered this task (empty for on_assign)
+	TriggerThreadID   string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
 	// CommentReplyTargets is set for a comment run that coalesced comments
 	// spanning MORE THAN ONE root thread (MUL-4348). When it has >=2 entries the
 	// workflow's reply step fans out — one reply per thread — instead of the
@@ -256,6 +257,9 @@ type Environment struct {
 	LocalWorktree *LocalWorktree
 	// CodexHome is the path to the per-task CODEX_HOME directory (set only for codex provider).
 	CodexHome string
+	// GraphHome redirects native discovery outside CODEX_HOME to private task state.
+	GraphHome       string
+	GraphSkillPaths []string
 	// ClaudeSettingsPath is a task-local --settings JSON file that applies
 	// disabled runtime-skill policy without mutating the user's Claude config.
 	ClaudeSettingsPath string
@@ -490,11 +494,25 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// For Codex, set up a per-task CODEX_HOME seeded from ~/.codex/ with skills.
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(envRoot, codexHomeDirName)
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, IsLocalDirectory: params.LocalWorkDir != "" || params.LocalWorktree != nil, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
+		graphIsolated := params.Task.GraphInstructions != ""
+		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GraphIsolated: graphIsolated, CodexVersion: params.CodexVersion, IsLocalDirectory: params.LocalWorkDir != "" || params.LocalWorktree != nil, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
 			return nil, fmt.Errorf("execenv: prepare codex-home: %w", err)
 		}
-		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
-			return nil, fmt.Errorf("execenv: hydrate codex skills: %w", err)
+		var skillsErr error
+		if graphIsolated {
+			skillsErr = hydrateGraphCodexSkills(codexHome, params.Task.AgentSkills)
+			for _, slug := range resolveSkillSlugs(params.Task.AgentSkills) {
+				env.GraphSkillPaths = append(env.GraphSkillPaths, filepath.Join(codexHome, "skills", slug, "SKILL.md"))
+			}
+			env.GraphHome = filepath.Join(envRoot, "graph-home")
+			if err := os.MkdirAll(env.GraphHome, 0700); err != nil {
+				return nil, err
+			}
+		} else {
+			skillsErr = hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger)
+		}
+		if skillsErr != nil {
+			return nil, fmt.Errorf("execenv: hydrate codex skills: %w", skillsErr)
 		}
 		env.CodexHome = codexHome
 	}

@@ -1855,6 +1855,18 @@ func (h *Handler) failClaimedTaskBeforeLaunch(
 // means the task must not be dispatched; the builder has already cancelled it
 // where the failure semantics require it.
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
+	managed, graphErr := h.graphManagedTask(r.Context(), task.ID)
+	if graphErr != nil {
+		return resp, nil, 0, 0, &claimBuildFailure{status: http.StatusServiceUnavailable, outcome: "graph_scope_unavailable", message: "Graph task scope unavailable"}
+	}
+	if managed {
+		graphResp, err := h.buildGraphClaim(r, *task, runtime)
+		if err != nil {
+			_, _ = h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task)
+			return graphResp, nil, 0, 0, &claimBuildFailure{status: http.StatusConflict, outcome: "graph_held", message: err.Error()}
+		}
+		return graphResp, []pgtype.UUID{}, len(graphResp.Agent.SkillRefs), 0, nil
+	}
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
 	// Claim-only capability: this server resolves the squad-leader role on the
@@ -3256,6 +3268,9 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]any{"bundles": []service.AgentSkillData{}})
 		return
 	}
+	if h.resolveGraphSkillBundles(w, r, task, taskWorkspaceID, req) {
+		return
+	}
 
 	bundles, _ := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
 	pluginBundles, _, _, err := h.TaskService.LoadTaskPluginSkillBundles(r.Context(), task.ID)
@@ -3388,8 +3403,13 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
+	task, err := h.TaskService.StartTask(service.WithGraphExecutor(r.Context(), r.Header.Get("X-Daemon-Instance-ID")), parseUUID(taskID))
 	if err != nil {
+		var graphErr *service.GraphError
+		if errors.As(err, &graphErr) {
+			writeGraphError(w, err)
+			return
+		}
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -3474,10 +3494,11 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	PRURL     string `json:"pr_url"`
-	Output    string `json:"output"`
-	SessionID string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	GraphReceipt *service.GraphTaskReceipt `json:"graph_receipt,omitempty"`
+	PRURL        string                    `json:"pr_url"`
+	Output       string                    `json:"output"`
+	SessionID    string                    `json:"session_id"` // Claude session ID for future resumption
+	WorkDir      string                    `json:"work_dir"`   // working directory used during execution
 	// BranchName is the branch this run delivered its work on. Worktree-mode
 	// local_directory tasks never touch the user's working copy, so this is the
 	// only pointer to where the changes went. Empty for every other task kind.
@@ -3506,6 +3527,12 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if !h.validateGraphReceiptRequest(w, r, taskID, req.GraphReceipt) {
+		return
+	}
+	if req.GraphReceipt != nil {
+		r = r.WithContext(service.WithGraphReceipt(r.Context(), *req.GraphReceipt))
 	}
 
 	// GH #6402: a daemon whose backend does not (yet) read the provider's
@@ -3675,6 +3702,11 @@ func (h *Handler) emitIssueExecutedOnFirstCompletion(r *http.Request, task *db.A
 //     these comments and its delivered set will contain them, so its completion
 //     finds nothing to re-schedule.
 func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.AgentTaskQueue) {
+	if task != nil {
+		if managed, err := h.graphManagedTask(ctx, task.ID); err != nil || managed {
+			return
+		}
+	}
 	if task == nil || !task.IssueID.Valid || !task.AgentID.Valid || !task.CreatedAt.Valid {
 		return
 	}
@@ -4169,10 +4201,11 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 
 // FailTask marks a running task as failed.
 type TaskFailRequest struct {
-	Error         string `json:"error"`
-	SessionID     string `json:"session_id,omitempty"`
-	WorkDir       string `json:"work_dir,omitempty"`
-	FailureReason string `json:"failure_reason,omitempty"`
+	GraphReceipt  *service.GraphTaskReceipt `json:"graph_receipt,omitempty"`
+	Error         string                    `json:"error"`
+	SessionID     string                    `json:"session_id,omitempty"`
+	WorkDir       string                    `json:"work_dir,omitempty"`
+	FailureReason string                    `json:"failure_reason,omitempty"`
 	// BranchName: a failed run can still have produced a branch — worktree mode
 	// commits whatever the agent left before tearing the worktree down. Report
 	// it so a partially-successful run is still findable.
@@ -4212,6 +4245,12 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 // transaction, token revocation and runtime wake-up as one the daemon reported
 // as failed itself.
 func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, workspaceID string, req TaskFailRequest) {
+	if !h.validateGraphReceiptRequest(w, r, taskID, req.GraphReceipt) {
+		return
+	}
+	if req.GraphReceipt != nil {
+		r = r.WithContext(service.WithGraphReceipt(r.Context(), *req.GraphReceipt))
+	}
 	// MUL-5305: SessionRolloutMissing is applied inside FailTask's terminal
 	// transaction — forcing session_id NULL (overriding the COALESCE that would
 	// keep a stale mid-flight pin) and flagging the row in the same commit that
@@ -4332,6 +4371,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 // transcript (#5219); idempotent when nothing was deferred.
 // TaskCancelAckRequest is the body of the daemon's cancel acknowledgement.
 type TaskCancelAckRequest struct {
+	GraphReceipt *service.GraphTaskReceipt `json:"graph_receipt,omitempty"`
 	// BranchName: a cancelled worktree task has already committed whatever the
 	// agent produced — the worktree is finalized before the daemon learns of
 	// the cancellation. The rest of the result is discarded on this path, so
@@ -4354,6 +4394,16 @@ func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 	// break the cancellation contract this endpoint exists for.
 	var req TaskCancelAckRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if !h.validateGraphReceiptRequest(w, r, taskID, req.GraphReceipt) {
+		return
+	}
+	if req.GraphReceipt != nil {
+		workspaceID := h.TaskService.ResolveTaskWorkspaceID(r.Context(), task)
+		if err := h.GraphService.RecordTaskTerminal(r.Context(), workspaceID, taskID, *req.GraphReceipt); err != nil {
+			writeGraphError(w, err)
+			return
+		}
+	}
 
 	// Terminal deliveries first, failing LOUD on persistence errors: these
 	// fields are the only pointer to a cancelled task's work, and the daemon

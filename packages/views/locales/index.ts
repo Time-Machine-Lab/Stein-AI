@@ -15,6 +15,7 @@ import enInbox from "./en/inbox.json";
 import enWorkspace from "./en/workspace.json";
 import enProjects from "./en/projects.json";
 import enAutopilots from "./en/autopilots.json";
+import enGraphs from "./en/graphs.json";
 import enSkills from "./en/skills.json";
 import enChat from "./en/chat.json";
 import enModals from "./en/modals.json";
@@ -40,6 +41,7 @@ import zhHansInbox from "./zh-Hans/inbox.json";
 import zhHansWorkspace from "./zh-Hans/workspace.json";
 import zhHansProjects from "./zh-Hans/projects.json";
 import zhHansAutopilots from "./zh-Hans/autopilots.json";
+import zhHansGraphs from "./zh-Hans/graphs.json";
 import zhHansSkills from "./zh-Hans/skills.json";
 import zhHansChat from "./zh-Hans/chat.json";
 import zhHansModals from "./zh-Hans/modals.json";
@@ -65,6 +67,7 @@ import koInbox from "./ko/inbox.json";
 import koWorkspace from "./ko/workspace.json";
 import koProjects from "./ko/projects.json";
 import koAutopilots from "./ko/autopilots.json";
+import koGraphs from "./ko/graphs.json";
 import koSkills from "./ko/skills.json";
 import koChat from "./ko/chat.json";
 import koModals from "./ko/modals.json";
@@ -90,6 +93,7 @@ import jaInbox from "./ja/inbox.json";
 import jaWorkspace from "./ja/workspace.json";
 import jaProjects from "./ja/projects.json";
 import jaAutopilots from "./ja/autopilots.json";
+import jaGraphs from "./ja/graphs.json";
 import jaSkills from "./ja/skills.json";
 import jaChat from "./ja/chat.json";
 import jaModals from "./ja/modals.json";
@@ -121,6 +125,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     workspace: enWorkspace,
     projects: enProjects,
     autopilots: enAutopilots,
+    graphs: enGraphs,
     skills: enSkills,
     chat: enChat,
     modals: enModals,
@@ -148,6 +153,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     workspace: zhHansWorkspace,
     projects: zhHansProjects,
     autopilots: zhHansAutopilots,
+    graphs: zhHansGraphs,
     skills: zhHansSkills,
     chat: zhHansChat,
     modals: zhHansModals,
@@ -175,6 +181,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     workspace: koWorkspace,
     projects: koProjects,
     autopilots: koAutopilots,
+    graphs: koGraphs,
     skills: koSkills,
     chat: koChat,
     modals: koModals,
@@ -202,6 +209,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     workspace: jaWorkspace,
     projects: jaProjects,
     autopilots: jaAutopilots,
+    graphs: jaGraphs,
     skills: jaSkills,
     chat: jaChat,
     modals: jaModals,

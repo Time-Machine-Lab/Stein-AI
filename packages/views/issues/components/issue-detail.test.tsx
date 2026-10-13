@@ -12,8 +12,9 @@ import {
 } from "@multica/core/issues/stores/sub-issue-display-store";
 import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
+import enGraphs from "../../locales/en/graphs.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues, graphs: enGraphs } };
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 
@@ -726,6 +727,17 @@ describe("IssueDetail (shared)", () => {
     expect(screen.queryByTestId("title-editor")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("rich-text-editor")).toHaveLength(1);
     expect(contentEditorMounts.count).toBe(1);
+  });
+
+  it("keeps a Graph-managed issue read-only before its run ID is hydrated", async () => {
+    mockApiObj.getIssue.mockResolvedValue({ ...mockIssue, execution_mode: "graph" });
+    const { container } = renderIssueDetail();
+    expect(await screen.findByRole("heading", { name: mockIssue.title })).toBeInTheDocument();
+    expect(screen.getByText(mockIssue.description!)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(mockIssue.description!)).not.toBeInTheDocument();
+    expect(container.querySelectorAll("fieldset[disabled]").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText(enGraphs.run.graph_managed)).toBeInTheDocument();
+    expect(contentEditorMounts.count).toBe(0);
   });
 
   it("opts the description editor into the unmount flush", async () => {

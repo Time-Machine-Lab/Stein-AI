@@ -935,6 +935,9 @@ const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number()
 
 export const IssueSchema = z.object({
   id: z.string(),
+  execution_mode: z.string().optional(),
+  graph_run_id: z.string().nullable().optional(),
+  graph_node_run_id: z.string().nullable().optional(),
   workspace_id: z.string(),
   number: z.number(),
   identifier: z.string(),

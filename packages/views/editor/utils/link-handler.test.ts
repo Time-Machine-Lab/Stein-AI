@@ -106,6 +106,21 @@ describe("openLink", () => {
     expect(navigatedPaths()).toEqual(["/acme/issues/MUL-1"]);
   });
 
+  it("preserves an existing graphs workspace and canonical Graph links", () => {
+    // Graphs is not a reserved workspace slug. Treating it as a slugless
+    // shortcut would rewrite URLs belonging to an existing workspace.
+    openLink("/graphs", "acme", APP_ORIGIN);
+    openLink("/graphs/issues/MUL-1", "acme", APP_ORIGIN);
+    openLink("/graphs/graphs/runs/run-1", "acme", APP_ORIGIN);
+    openLink("/other/graphs/runs/run-2", "acme", APP_ORIGIN);
+    expect(navigatedPaths()).toEqual([
+      "/graphs",
+      "/graphs/issues/MUL-1",
+      "/graphs/graphs/runs/run-1",
+      "/other/graphs/runs/run-2",
+    ]);
+  });
+
   it("leaves a path that already carries a slug alone", () => {
     openLink("/other/issues/MUL-1", "acme", APP_ORIGIN);
     expect(navigatedPaths()).toEqual(["/other/issues/MUL-1"]);

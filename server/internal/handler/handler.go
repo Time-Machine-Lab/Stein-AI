@@ -163,6 +163,7 @@ type Handler struct {
 	DaemonWorkspaceRefresh WorkspaceSetRefreshNotifier
 	Bus                    *events.Bus
 	TaskService            *service.TaskService
+	GraphService           *service.GraphService
 	PluginService          *service.PluginService
 	IssueService           *service.IssueService
 	AutopilotService       *service.AutopilotService
@@ -414,6 +415,24 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	h.GraphService = service.NewGraphService(queries, txStarter)
+	h.TaskService.Graph = h.GraphService
+	h.GraphService.PrepareNode = h.prepareGraphNode
+	h.GraphService.PrepareRun = h.prepareGraphRun
+	h.GraphService.AuthorizeRun = h.authorizeGraphRun
+	h.GraphService.AuthorizeSnapshot = h.authorizeGraphSnapshot
+	h.GraphService.CreateTask = h.TaskService.CreateGraphTaskTx
+	h.GraphService.NotifyTask = h.TaskService.NotifyTaskEnqueued
+	h.GraphService.NotifyRun = h.notifyGraphRun
+	h.GraphService.ValidateArtifacts = h.validateGraphArtifacts
+	h.GraphService.RequestStop = func(ctx context.Context, taskID string) error {
+		id, err := parseGraphUUID(taskID)
+		if err != nil {
+			return err
+		}
+		_, err = h.TaskService.CancelTask(ctx, id)
+		return err
+	}
 
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key

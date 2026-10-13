@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -55,6 +57,7 @@ const maxPreviewTextSize = 2 << 20 // 2 MB
 // ---------------------------------------------------------------------------
 
 type AttachmentResponse struct {
+	ContentHash   string  `json:"content_hash,omitempty"`
 	ID            string  `json:"id"`
 	WorkspaceID   string  `json:"workspace_id"`
 	IssueID       *string `json:"issue_id"`
@@ -377,6 +380,7 @@ func (h *Handler) groupChatMessageAttachments(ctx context.Context, workspaceID s
 // ---------------------------------------------------------------------------
 
 func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
+	graphUpload := false
 	if h.Storage == nil {
 		writeError(w, http.StatusServiceUnavailable, "file upload not configured")
 		return
@@ -396,6 +400,12 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
+	if scope := graphScopeFromRequest(r); scope != nil {
+		if r.FormValue("task_id") != scope.TaskID || r.FormValue("issue_id") != "" || r.FormValue("comment_id") != "" || r.FormValue("chat_session_id") != "" {
+			writeError(w, http.StatusForbidden, "Graph uploads must use only the current task_id")
+			return
+		}
+	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -546,7 +556,21 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "task_id upload requires the task's own agent")
 				return
 			}
-			if !task.ChatSessionID.Valid {
+			graphTask, graphErr := h.graphManagedTask(r.Context(), task.ID)
+			if graphErr != nil {
+				writeGraphError(w, graphErr)
+				return
+			}
+			if graphTask {
+				graphUpload = true
+				if task.Status != "running" {
+					writeError(w, http.StatusConflict, "Graph task is not accepting uploads")
+					return
+				}
+				params.IssueID = task.IssueID
+				params.CommentID = pgtype.UUID{}
+				params.ChatSessionID = pgtype.UUID{}
+			} else if !task.ChatSessionID.Valid {
 				writeError(w, http.StatusBadRequest, "task_id upload requires a chat task")
 				return
 			}
@@ -570,7 +594,16 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			// S3 upload succeeded but DB record failed — still return the link
 			// so the file is usable. Log the error for investigation.
 		} else {
-			writeJSON(w, http.StatusOK, h.attachmentToResponse(att, attachmentURLModeFromRequest(r)))
+			response := h.attachmentToResponse(att, attachmentURLModeFromRequest(r))
+			if graphUpload {
+				digest := sha256.Sum256(data)
+				response.ContentHash = hex.EncodeToString(digest[:])
+				if _, err := h.DB.Exec(r.Context(), `INSERT INTO graph_attachment_upload(attachment_id,workspace_id,task_id,content_hash,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`, att.ID, att.WorkspaceID, params.TaskID, response.ContentHash, int64(len(data)), contentType); err != nil {
+					writeError(w, http.StatusServiceUnavailable, "Graph attachment receipt could not be saved; upload again")
+					return
+				}
+			}
+			writeJSON(w, http.StatusOK, response)
 			return
 		}
 

@@ -626,6 +626,148 @@ type GithubPullRequestCheckSuite struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type GraphApproval struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RunID       pgtype.UUID        `json:"run_id"`
+	State       string             `json:"state"`
+	Document    []byte             `json:"document"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphArtifact struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RunID       pgtype.UUID        `json:"run_id"`
+	NodeRunID   pgtype.UUID        `json:"node_run_id"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	ContentHash string             `json:"content_hash"`
+	Document    []byte             `json:"document"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphAttachmentUpload struct {
+	AttachmentID pgtype.UUID        `json:"attachment_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	TaskID       pgtype.UUID        `json:"task_id"`
+	ContentHash  string             `json:"content_hash"`
+	SizeBytes    int64              `json:"size_bytes"`
+	MediaType    string             `json:"media_type"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphCommand struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	CommandKey  string             `json:"command_key"`
+	RequestHash string             `json:"request_hash"`
+	Response    []byte             `json:"response"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphDefinition struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	CreatorID   pgtype.UUID        `json:"creator_id"`
+	Revision    int64              `json:"revision"`
+	Document    []byte             `json:"document"`
+	ArchivedAt  pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GraphIssueOwner struct {
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RunID       pgtype.UUID        `json:"run_id"`
+	NodeRunID   pgtype.UUID        `json:"node_run_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphNodeRun struct {
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	NodeKey       string      `json:"node_key"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+	State         string      `json:"state"`
+	CurrentTaskID pgtype.UUID `json:"current_task_id"`
+	InputHash     string      `json:"input_hash"`
+	Document      []byte      `json:"document"`
+}
+
+type GraphOperation struct {
+	OperationKey string             `json:"operation_key"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	RunID        pgtype.UUID        `json:"run_id"`
+	Kind         string             `json:"kind"`
+	AvailableAt  pgtype.Timestamptz `json:"available_at"`
+	ConsumedAt   pgtype.Timestamptz `json:"consumed_at"`
+	LastError    pgtype.Text        `json:"last_error"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphRun struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	RootIssueID  pgtype.UUID        `json:"root_issue_id"`
+	VersionID    pgtype.UUID        `json:"version_id"`
+	InitiatorID  pgtype.UUID        `json:"initiator_id"`
+	State        string             `json:"state"`
+	ControlState string             `json:"control_state"`
+	Revision     int64              `json:"revision"`
+	Document     []byte             `json:"document"`
+	ArchivedAt   pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GraphRunEvent struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RunID       pgtype.UUID        `json:"run_id"`
+	Sequence    int64              `json:"sequence"`
+	Document    []byte             `json:"document"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphSubmission struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	NodeRunID      pgtype.UUID        `json:"node_run_id"`
+	TaskID         pgtype.UUID        `json:"task_id"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	ContentHash    string             `json:"content_hash"`
+	Document       []byte             `json:"document"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphTaskAttempt struct {
+	TaskID              pgtype.UUID        `json:"task_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	RunID               pgtype.UUID        `json:"run_id"`
+	NodeRunID           pgtype.UUID        `json:"node_run_id"`
+	AttemptNo           int32              `json:"attempt_no"`
+	ExecutionGeneration int64              `json:"execution_generation"`
+	InputHash           string             `json:"input_hash"`
+	Manifest            []byte             `json:"manifest"`
+	ManifestHash        string             `json:"manifest_hash"`
+	FinalReceipt        []byte             `json:"final_receipt"`
+	StoppedAt           pgtype.Timestamptz `json:"stopped_at"`
+	ExecutorID          pgtype.Text        `json:"executor_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
+type GraphVersion struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	GraphID     pgtype.UUID        `json:"graph_id"`
+	Version     int32              `json:"version"`
+	Document    []byte             `json:"document"`
+	ContentHash string             `json:"content_hash"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type InboxItem struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

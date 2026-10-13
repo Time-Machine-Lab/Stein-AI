@@ -247,6 +247,15 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			http.Error(w, "invalid checkout_mode", http.StatusBadRequest)
 			return
 		}
+		if binding, found, valid := d.graphCheckoutBinding(req); found {
+			if !valid {
+				http.Error(w, "Graph repository and input commit are immutable", http.StatusConflict)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(binding.Result)
+			return
+		}
 
 		if d.repoCache == nil {
 			http.Error(w, "repo cache not initialized", http.StatusInternalServerError)

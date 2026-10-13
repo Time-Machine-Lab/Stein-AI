@@ -174,7 +174,7 @@ func NewAPIClient(baseURL, workspaceID, token string) *APIClient {
 // which keeps signing regardless of this capability — so the signature in list
 // payloads was pure cost: raw bytes, a per-attachment RSA sign, and bytes that
 // differ on every read and therefore defeat agent prompt caching.
-const clientCapabilities = "stable_attachment_urls"
+const clientCapabilities = "stable_attachment_urls,graph-node-submit-v1"
 
 func (c *APIClient) setHeaders(req *http.Request) {
 	req.Header.Set("X-Client-Capabilities", clientCapabilities)
@@ -428,6 +428,7 @@ type AttachmentResponse struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
+	ContentHash string `json:"content_hash,omitempty"`
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -486,9 +487,9 @@ func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename st
 }
 
 // UploadChatAttachment uploads a file via multipart form to /api/upload-file
-// tagged with a chat task (task_id). The server binds the row to the assistant
-// reply that task produces on completion. Returns the full AttachmentResponse
-// (id + markdown_url) so the agent can embed the image inline in its reply.
+// tagged with the current task (task_id). For chat tasks the server binds the
+// row to the assistant reply; Graph tasks receive verified artifact metadata.
+// Returns the attachment identity, durable markdown URL, size, type and hash.
 func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

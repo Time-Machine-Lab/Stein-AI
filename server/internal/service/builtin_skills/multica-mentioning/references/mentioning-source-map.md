@@ -143,3 +143,15 @@ unchanged threads — no member-notification call. The verified contract is
 narrow: a `member` or `issue` mention renders as a link and enqueues no agent
 run; only `agent` and `squad` mentions enqueue work. If a notification UX
 exists, it is not in this handler, so this skill makes no claim about it.
+# Graph V1 exception (2026-10-13)
+
+`server/internal/handler/comment.go` checks `graphOwnsIssue` in agent mention
+dispatch and returns without enqueueing Graph-owned issues.
+`server/internal/handler/graph_scope.go` (`GraphTaskTokenScope`) and
+`graph_scope_policy.go` enforce the Graph task route allowlist, including reads.
+`server/internal/daemon/graph.go` (`buildGraphPrompt`) supplies fixed input and
+forbids fresh-comment context and delegation. `server/cmd/multica/cmd_graph.go`
+implements `graph node context`, `submit`, and `block`.
+`runGraphNodeComment` resolves `issue_id` through that same scoped context and
+posts only a diagnostic comment to its current node issue; it never calls the
+ordinary live issue resolver.

@@ -474,11 +474,18 @@ func TestNormalizeGOOS(t *testing.T) {
 // every other test green while the CLI silently went back to receiving ~800-char
 // signed URLs on every attachment of every list read.
 //
-// The exact string is load-bearing: the server matches the token literally
-// (handler.requestHasClientCapability), so it is asserted verbatim rather than
-// through the constant.
+// The server matches each comma-separated capability token literally, so assert
+// token membership rather than tying the test to the entire extensible header.
 func TestSetHeaders_AdvertisesStableAttachmentURLs(t *testing.T) {
 	const wantCapability = "stable_attachment_urls"
+	hasCapability := func(header string) bool {
+		for _, capability := range strings.Split(header, ",") {
+			if strings.TrimSpace(capability) == wantCapability {
+				return true
+			}
+		}
+		return false
+	}
 
 	// Every verb goes through setHeaders, and an agent's read path is not only
 	// GET (comment add posts, attachment upload multiparts). Cover the shapes
@@ -497,7 +504,7 @@ func TestSetHeaders_AdvertisesStableAttachmentURLs(t *testing.T) {
 		if err := client.GetJSON(context.Background(), "/api/issues/x/comments", &out); err != nil {
 			t.Fatalf("GetJSON: %v", err)
 		}
-		if got != wantCapability {
+		if !hasCapability(got) {
 			t.Errorf("X-Client-Capabilities = %q, want %q — Phase 1 is off unless the CLI advertises this", got, wantCapability)
 		}
 	})
@@ -516,7 +523,7 @@ func TestSetHeaders_AdvertisesStableAttachmentURLs(t *testing.T) {
 		if _, err := client.GetJSONWithHeaders(context.Background(), "/api/issues/x/comments", &out); err != nil {
 			t.Fatalf("GetJSONWithHeaders: %v", err)
 		}
-		if got != wantCapability {
+		if !hasCapability(got) {
 			t.Errorf("X-Client-Capabilities = %q, want %q", got, wantCapability)
 		}
 	})
@@ -535,7 +542,7 @@ func TestSetHeaders_AdvertisesStableAttachmentURLs(t *testing.T) {
 		if err := client.PostJSON(context.Background(), "/api/issues/x/comments", map[string]string{"content": "hi"}, &out); err != nil {
 			t.Fatalf("PostJSON: %v", err)
 		}
-		if got != wantCapability {
+		if !hasCapability(got) {
 			t.Errorf("X-Client-Capabilities = %q, want %q", got, wantCapability)
 		}
 	})
@@ -556,7 +563,7 @@ func TestSetHeaders_AdvertisesStableAttachmentURLs(t *testing.T) {
 		if err := client.GetJSON(context.Background(), "/api/health", &out); err != nil {
 			t.Fatalf("GetJSON: %v", err)
 		}
-		if got != wantCapability {
+		if !hasCapability(got) {
 			t.Errorf("X-Client-Capabilities = %q, want %q", got, wantCapability)
 		}
 	})

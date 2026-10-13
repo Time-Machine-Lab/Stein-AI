@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS graph_artifact_id_idx;

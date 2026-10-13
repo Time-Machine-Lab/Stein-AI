@@ -17,6 +17,7 @@ import { IssuesPage } from "@multica/views/issues/components";
 import { ProjectsPage } from "@multica/views/projects/components";
 import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
+import { GraphsPage, GraphDetailPage, GraphRunPage } from "@multica/views/graphs";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
@@ -157,6 +158,10 @@ export const appRoutes: RouteObject[] = [
             element: <AutopilotDetailPage />,
             handle: { title: "Autopilot" },
           },
+          { path: "graphs", element: <GraphsPage />, handle: { title: "Graphs" } },
+          { path: "graphs/new", element: <GraphDetailPage create />, handle: { title: "Graph" } },
+          { path: "graphs/:id", element: <GraphDetailPage />, handle: { title: "Graph" } },
+          { path: "graphs/runs/:id", element: <GraphRunPage />, handle: { title: "Graph run" } },
           {
             path: "my-issues",
             element: <MyIssuesPage />,

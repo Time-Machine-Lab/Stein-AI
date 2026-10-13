@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/internal/graph"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/pkg/pluginruntime"
 )
@@ -71,6 +72,9 @@ type ActiveSiblingRunData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
+	Graph                   *graph.AttemptManifest              `json:"graph_manifest,omitempty"`
+	GraphManifestHash       string                              `json:"graph_manifest_hash,omitempty"`
+	GraphRootSnapshot       json.RawMessage                     `json:"graph_root_snapshot,omitempty"`
 	ID                      string                              `json:"id"`
 	AgentID                 string                              `json:"agent_id"`
 	RuntimeID               string                              `json:"runtime_id"`
@@ -290,14 +294,17 @@ type TaskUsageEntry struct {
 
 // TaskResult is the outcome of executing a task.
 type TaskResult struct {
-	Status        string `json:"status"`
-	Comment       string `json:"comment"`
-	BranchName    string `json:"branch_name,omitempty"`
-	EnvType       string `json:"env_type,omitempty"`
-	SessionID     string `json:"session_id,omitempty"` // Claude session ID for future resumption
-	WorkDir       string `json:"work_dir,omitempty"`   // working directory used during execution
-	EnvRoot       string `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
-	FailureReason string `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
+	GraphExecutionStopped *bool             `json:"-"`
+	GraphReceipt          *GraphTaskReceipt `json:"-"`
+	GraphRepositoryPath   string            `json:"-"`
+	Status                string            `json:"status"`
+	Comment               string            `json:"comment"`
+	BranchName            string            `json:"branch_name,omitempty"`
+	EnvType               string            `json:"env_type,omitempty"`
+	SessionID             string            `json:"session_id,omitempty"` // Claude session ID for future resumption
+	WorkDir               string            `json:"work_dir,omitempty"`   // working directory used during execution
+	EnvRoot               string            `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
+	FailureReason         string            `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
 	// SessionRolloutMissing is set when the daemon withheld this task's Codex
 	// session because its rollout was not in the store (MUL-5305). Forwarded to
 	// the terminal report so the server clears the resume pointer and flags the

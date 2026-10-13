@@ -34,20 +34,31 @@ var attachmentDownloadCmd = &cobra.Command{
 
 var attachmentUploadCmd = &cobra.Command{
 	Use:   "upload <path>",
-	Short: "Upload a file to attach to your chat reply",
-	Long: `Upload a local file so it is attached to the reply of the current chat task.
+	Short: "Upload a file for the current chat or Graph task",
+	Long: `Upload a local file associated with the current task.
 
-Intended for agents running inside a chat task: the file is tagged with the
+For agents running inside a chat task, the file is tagged with the
 task and, when the task completes, the server binds it to the assistant reply
 it produces — it appears as an attachment card below your reply even if you
 paste nothing. The command also returns a markdown snippet you may paste on its
 own line to place the item: files use !file[name](url) (a card), images use
 ![name](url) (inline).
 
+For a Graph task, the JSON response includes the server-verified content_hash,
+size (bytes) and media_type. Copy those fields and id into an attachment_ref
+artifact, and set producer_task_id to the current manifest's task_id. Uploading
+does not submit a node result: include the artifact in the result file passed
+to multica graph node submit --result-file <path>. If content_hash is absent or
+empty, do not invent it; this upload cannot serve as a verified Graph artifact.
+
 The task id is read from MULTICA_TASK_ID (set by the daemon inside a task);
-override it with --task when needed.`,
+override it with --task when needed outside Graph. A Graph task must use its
+current task identity.`,
 	Example: `  # Attach an image to the current chat reply
-  $ multica attachment upload ./chart.png`,
+  $ multica attachment upload ./chart.png
+
+  # Upload Graph evidence and read the returned artifact metadata
+  $ multica attachment upload ./evidence.txt`,
 	Args: exactArgs(1),
 	RunE: runAttachmentUpload,
 }
@@ -57,7 +68,7 @@ func init() {
 	attachmentCmd.AddCommand(attachmentUploadCmd)
 
 	attachmentDownloadCmd.Flags().StringP("output-dir", "o", ".", "Directory to save the downloaded file")
-	attachmentUploadCmd.Flags().String("task", "", "Chat task id to attach to (defaults to MULTICA_TASK_ID)")
+	attachmentUploadCmd.Flags().String("task", "", "Task id to attach to (defaults to MULTICA_TASK_ID; Graph requires the current task)")
 }
 
 func runAttachmentUpload(cmd *cobra.Command, args []string) error {
@@ -71,7 +82,7 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 		taskID = client.TaskID
 	}
 	if taskID == "" {
-		return fmt.Errorf("no chat task in context: run inside a chat task (MULTICA_TASK_ID set) or pass --task <id>")
+		return fmt.Errorf("no task in context: run inside a chat or Graph task (MULTICA_TASK_ID set) or pass --task <id>")
 	}
 
 	path := args[0]
@@ -108,6 +119,9 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 		"filename":     filename,
 		"markdown_url": att.MarkdownURL,
 		"markdown":     markdown,
+		"content_hash": att.ContentHash,
+		"size":         att.SizeBytes,
+		"media_type":   att.ContentType,
 	})
 }
 

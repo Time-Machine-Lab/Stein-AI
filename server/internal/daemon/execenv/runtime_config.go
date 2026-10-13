@@ -401,5 +401,8 @@ func CleanupRuntimeConfig(workDir, provider string) error {
 // legacy verbose brief; the flag has been retired (MUL-4297) and the slim brief
 // is now the only path.
 func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
+	if ctx.GraphInstructions != "" {
+		return ctx.GraphInstructions
+	}
 	return buildMetaSkillContentSlim(provider, ctx)
 }

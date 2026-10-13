@@ -47,6 +47,9 @@ import {
 import { copyText } from "@multica/ui/lib/clipboard";
 import type { UseIssueActionsResult } from "./use-issue-actions";
 import { useT } from "../../i18n";
+import { isGraphManagedIssue } from "@multica/core/graphs";
+import { useWorkspacePaths } from "@multica/core/paths";
+import { useNavigation } from "../../navigation";
 
 // Both Dropdown and Context menu wrappers expose an API-compatible surface
 // (variant, inset, onClick, etc.). We bundle the primitives we need into a
@@ -102,6 +105,9 @@ export function IssueActionsMenuItems({
   onDeletedFallbackPath,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
+  const { t: graphT } = useT("graphs");
+  const paths = useWorkspacePaths();
+  const navigation = useNavigation();
   const {
     isPinned,
     updateField,
@@ -145,6 +151,17 @@ export function IssueActionsMenuItems({
       else toast.error(t(($) => $.detail.workdir_path_copy_failed));
     });
   }, [tasks, t]);
+
+  if (isGraphManagedIssue(issue)) {
+    return <>
+      <P.Item disabled className="max-w-64 whitespace-normal">{graphT(($) => $.run.graph_managed)}</P.Item>
+      {issue.graph_run_id && <P.Item onClick={() => navigation.push(paths.graphRun(issue.graph_run_id!))}>{graphT(($) => $.run.open_run)}</P.Item>}
+      <P.Separator />
+      <P.Item onClick={openInNewTab}><ExternalLink className="size-3.5" />{t(($) => $.actions.open_in_new_tab)}</P.Item>
+      <P.Item onClick={() => void copyLink()}><Link2 className="size-3.5" />{t(($) => $.actions.copy_link)}</P.Item>
+      <P.Item onClick={togglePin}>{isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}{isPinned ? t(($) => $.actions.unpin_from_sidebar) : t(($) => $.actions.pin_to_sidebar)}</P.Item>
+    </>;
+  }
 
   return (
     <>

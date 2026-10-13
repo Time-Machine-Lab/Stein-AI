@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS graph_node_run_id_idx;

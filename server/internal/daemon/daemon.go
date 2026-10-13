@@ -171,6 +171,7 @@ type terminalTaskReportKind uint8
 const (
 	terminalTaskReportComplete terminalTaskReportKind = iota + 1
 	terminalTaskReportFail
+	terminalTaskReportGraphStopped
 
 	// CompleteTask and FailTask can make six 30-second HTTP attempts around
 	// the five backoffs in defaultTerminalRetrySchedule (124 seconds total).
@@ -186,6 +187,7 @@ const (
 // reportTerminalTask gives the durable outbox one insertion point without
 // revisiting every task exit when it is added.
 type terminalTaskReport struct {
+	graphReceipt  *GraphTaskReceipt
 	kind          terminalTaskReportKind
 	taskID        string
 	output        string
@@ -340,11 +342,12 @@ type repoCacheBackend interface {
 
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
-	cfg        Config
-	client     *Client
-	repoCache  repoCacheBackend
-	skillCache *SkillBundleCache
-	logger     *slog.Logger
+	graphRepoBindings sync.Map
+	cfg               Config
+	client            *Client
+	repoCache         repoCacheBackend
+	skillCache        *SkillBundleCache
+	logger            *slog.Logger
 
 	mu           sync.Mutex
 	workspaces   map[string]*workspaceState
@@ -1998,6 +2001,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+	go d.graphReportLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
@@ -4966,6 +4970,13 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 }
 
 func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
+	if task.Graph != nil {
+		if err := validateGraphTask(task); err != nil {
+			_ = d.reportTerminalTask(ctx, terminalTaskReport{kind: terminalTaskReportFail, taskID: task.ID, errorMessage: err.Error(), failureReason: "graph_protocol_invalid", graphReceipt: d.graphStoppedReceipt(task, "failed")})
+			return
+		}
+		defer d.graphRepoBindings.Delete(task.ID)
+	}
 	d.mu.Lock()
 	rt, tracked := d.runtimeIndex[task.RuntimeID]
 	d.mu.Unlock()
@@ -4984,6 +4995,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			taskID:        task.ID,
 			errorMessage:  "runtime went offline before the task started",
 			failureReason: taskfailure.ReasonRuntimeOffline.String(),
+			graphReceipt:  d.graphStoppedReceipt(task, "failed"),
 		}); err != nil {
 			d.logger.Error("fail task callback failed", "task", shortID(task.ID), "error", err)
 		}
@@ -5078,6 +5090,13 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}()
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+	if task.Graph != nil && isGraphHold(err) {
+		taskLog.Info("Graph attempt held before start; preserving attempt budget")
+		return
+	}
+	if task.Graph != nil {
+		d.finalizeGraphTask(runCtx, task, &result, err)
+	}
 
 	// Report usage before any early return — the agent accumulates tokens
 	// whether the task completes, errors, or is cancelled mid-run by the poll
@@ -5095,6 +5114,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	case <-cancelledByPoll:
 		taskLog.Info("task cancelled during execution, discarding result",
 			"branch_name", result.BranchName, "error", err)
+		if stopErr := d.reportGraphStopped(ctx, task.ID, result.GraphReceipt); stopErr != nil {
+			taskLog.Warn("Graph stop receipt queued for retry", "error", stopErr)
+		}
 		// runner.run has returned, so the transcript flush is complete —
 		// tell the server it can settle its deferred chat finalization
 		// (#5219). The sweeper grace period covers a lost ack's chat settle,
@@ -5105,7 +5127,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		// run errors stay discarded: on a cancelled run they are expected
 		// noise (context canceled, killed process), and persisting them would
 		// stamp a bogus reason on every ordinary mid-run cancel.
-		ack := TaskCancelAck{BranchName: result.BranchName}
+		ack := TaskCancelAck{BranchName: result.BranchName, GraphReceipt: result.GraphReceipt}
 		var preserved *worktreePreservedError
 		if errors.As(err, &preserved) {
 			ack.ErrorMessage = preserved.Error()
@@ -5131,6 +5153,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			taskID:        task.ID,
 			errorMessage:  err.Error(),
 			failureReason: taskRunFailureReason(err),
+			graphReceipt:  result.GraphReceipt,
 		}); failErr != nil {
 			taskLog.Error("fail task callback failed", "error", failErr)
 		}
@@ -5145,6 +5168,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// anyway. Reuse shouldInterruptAgent so this guard honors the same
 	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
+		if stopErr := d.reportGraphStopped(ctx, task.ID, result.GraphReceipt); stopErr != nil {
+			taskLog.Warn("Graph stop receipt queued for retry", "error", stopErr)
+		}
 		taskLog.Info("task cancelled during execution, discarding result",
 			"status", status, "error", err, "branch_name", result.BranchName)
 		// Same contract as the poll-cancelled path above: the transcript is
@@ -5156,7 +5182,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		// completed/failed rows the complete/fail callback is the
 		// authoritative channel and a stale run's late ack must not touch
 		// them.
-		if ackErr := d.client.AckTaskCancelled(ctx, task.ID, TaskCancelAck{BranchName: result.BranchName}); ackErr != nil {
+		if ackErr := d.client.AckTaskCancelled(ctx, task.ID, TaskCancelAck{BranchName: result.BranchName, GraphReceipt: result.GraphReceipt}); ackErr != nil {
 			taskLog.Warn("cancel ack failed; server sweeper will finalize", "error", ackErr)
 		}
 		return
@@ -5420,8 +5446,13 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			workDir:               result.WorkDir,
 			sessionRolloutMissing: result.SessionRolloutMissing,
 			retiredSessionID:      result.RetiredSessionID,
+			graphReceipt:          result.GraphReceipt,
 		})
 		if err == nil {
+			return
+		}
+		if result.GraphReceipt != nil {
+			taskLog.Error("Graph completion delivery failed; preserving provider result", "error", err)
 			return
 		}
 		// CompleteTask retries transient errors internally. A transient
@@ -5497,6 +5528,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			// they want to see how far it got.
 			branchName:            result.BranchName,
 			failureReason:         failureReason,
+			graphReceipt:          result.GraphReceipt,
 			sessionRolloutMissing: result.SessionRolloutMissing,
 			retiredSessionID:      result.RetiredSessionID,
 		}); err != nil {
@@ -5510,15 +5542,28 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 // parent deadlines: daemon shutdown cancels the root context before pollLoop's
 // 30-second drain, but terminal callbacks must still use that remaining window.
 // The explicit timeout keeps this detached work bounded during normal runs.
-func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTaskReport) error {
+func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTaskReport) (returnErr error) {
+	path, persistErr := d.persistGraphReport(report)
+	if persistErr != nil {
+		d.logger.Error("Graph terminal evidence could not be persisted", "error", persistErr)
+	}
+	defer func() {
+		if returnErr == nil && path != "" {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				d.logger.Warn("remove acknowledged Graph report", "error", err)
+			}
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), terminalTaskReportTimeout)
 	defer cancel()
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.graphReceipt)
 	case terminalTaskReportFail:
-		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID)
+		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.graphReceipt)
+	case terminalTaskReportGraphStopped:
+		return d.client.ReportGraphStopped(ctx, report.taskID, report.graphReceipt)
 	default:
 		return fmt.Errorf("unsupported terminal task report kind %d", report.kind)
 	}
@@ -5950,7 +5995,7 @@ func (d *Daemon) resolveSkillBundle(ctx context.Context, task *Task, ref SkillRe
 	}
 	bundleRef := skillRefFromBundle(bundle)
 	validationRef := bundleRef
-	if ref.Source == skillbundle.SourcePlugin {
+	if ref.Source == skillbundle.SourcePlugin || task.Graph != nil {
 		validationRef = ref
 	}
 	if !validateSkillBundle(validationRef, bundle) {
@@ -6088,6 +6133,35 @@ func skillRefFromBundle(bundle SkillData) SkillRefData {
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
+	graphExecutionStopped := true // Preparation has not launched a provider process.
+	if task.Graph != nil {
+		defer func() { taskResult.GraphExecutionStopped = &graphExecutionStopped }()
+	}
+	if task.Graph != nil {
+		if err := validateGraphTask(task); err != nil {
+			return TaskResult{}, err
+		}
+		if err := applyFrozenGraphAgent(&task); err != nil {
+			return TaskResult{}, err
+		}
+		if provider != "codex" {
+			return TaskResult{}, fmt.Errorf("Graph V1 supports only the built-in Codex runtime")
+		}
+		if len(task.Agent.CustomArgs) != 0 {
+			return TaskResult{}, fmt.Errorf("Graph V1 does not support custom provider arguments")
+		}
+		if raw := strings.TrimSpace(string(task.Agent.RuntimeConfig)); raw != "" && raw != "null" && raw != "{}" {
+			return TaskResult{}, fmt.Errorf("Graph V1 does not support provider runtime config overrides")
+		}
+		if strings.TrimSpace(task.Agent.Model) == "" {
+			return TaskResult{}, fmt.Errorf("Graph requires an explicit frozen model")
+		}
+		for key := range task.Agent.CustomEnv {
+			if graphBlockedEnvironmentKey(key) {
+				return TaskResult{}, fmt.Errorf("Graph custom environment key %s is reserved", key)
+			}
+		}
+	}
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
 	// CLI would otherwise silently fall back to the user-global config — a
@@ -6140,6 +6214,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// which must not extend to arbitrary commands sharing a protocol family.
 	var usesCustomProfileCommand bool
 	if customSpec, isCustom := d.customProfileLaunchForRuntime(task.RuntimeID); isCustom {
+		if task.Graph != nil {
+			return TaskResult{}, fmt.Errorf("Graph V1 does not support custom runtime launch commands")
+		}
 		usesCustomProfileCommand = true
 		entry.Path = customSpec.path
 		resolvedVersion = customSpec.version
@@ -6233,6 +6310,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		WorkspaceContext:                 task.WorkspaceContext,
 		ConnectedApps:                    task.ConnectedApps,
 	}
+	if task.Graph != nil {
+		// No stable conversation key: every attempt gets a private session store.
+		taskCtx = execenv.TaskContextForEnv{GraphInstructions: buildGraphPrompt(task), AgentID: agentID, AgentName: agentName, AgentInstructions: instructions, AgentSkills: convertSkillsForEnv(skills), DisabledRuntimeSkills: convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider)}
+	}
 
 	// Mark candidate env roots as active before any env work so the GC loop
 	// can't reclaim artifacts inside them mid-execution. We mark both the
@@ -6294,12 +6375,19 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		defer remoteMCPBrokers.Close()
 	}
 	for _, diagnostic := range remoteMCPDiagnostics {
+		if task.Graph != nil {
+			return TaskResult{}, fmt.Errorf("Graph Remote MCP configuration is unavailable: %s", diagnostic)
+		}
 		taskLog.Warn("Remote MCP degraded", "reason", diagnostic)
 	}
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
 		effectiveMcpConfig = agentMcpConfig
-		if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, agentMcpConfig); mergeErr != nil {
+		if task.Graph != nil {
+			if len(effectiveMcpConfig) == 0 || string(effectiveMcpConfig) == "null" {
+				effectiveMcpConfig = json.RawMessage(`{"mcpServers":{}}`)
+			}
+		} else if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, agentMcpConfig); mergeErr != nil {
 			taskLog.Warn("mcp_config: runtime merge failed; using agent configuration only",
 				"provider", provider,
 				"error", mergeErr,
@@ -6348,6 +6436,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// still on codex's argv, and a `-c windows.sandbox=...` written there
 		// must still be visible to the sandbox decision.
 		extraArgs := append(append([]string{}, profileFixedArgs...), defaultArgsForProvider(d.cfg, provider)...)
+		if task.Graph != nil {
+			extraArgs = nil
+		}
 		codexSandboxArgs = agent.NormalizeCodexLaunchArgs(extraArgs, agentCustomArgs, effectiveMcpConfig, d.logger)
 	}
 	// Hermes: resolve the overlay source home through one resolver contract —
@@ -6404,7 +6495,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// the resolved source home so switching an agent's profile switches its
 		// memory line, matching Hermes' own "a profile is an isolated instance"
 		// model. Guarded from the GC for the whole task, as the Codex store below.
-		if store := execenv.HermesMemoryStorePath(d.cfg.Profile, task.AgentID, res.SourceHome); store != "" {
+		if store := execenv.HermesMemoryStorePath(d.cfg.Profile, task.AgentID, res.SourceHome); store != "" && task.Graph == nil {
 			hermesMemoryStore = store
 			d.markActiveStore(store)
 			defer d.unmarkActiveStore(store)
@@ -6578,6 +6669,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		d.markActiveEnvRoot(env.RootDir)
 		defer d.unmarkActiveEnvRoot(env.RootDir)
 	}
+	if task.Graph != nil {
+		if env.LocalDirectory || env.LocalWorktree != nil {
+			return TaskResult{}, fmt.Errorf("Graph requires a fresh managed environment")
+		}
+		repoPath, graphErr := d.prepareGraphRepository(prepareCtx, task, env)
+		if graphErr != nil {
+			return TaskResult{}, fmt.Errorf("prepare Graph repository: %w", graphErr)
+		}
+		defer func() { taskResult.GraphRepositoryPath = repoPath }()
+	}
 	// Finalize the worktree on EVERY exit path, success or failure: commit
 	// whatever the agent left uncommitted, then unregister the worktree from
 	// the user's repo. Deferred against the named return so a task that fails
@@ -6725,6 +6826,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
+		if task.Graph != nil {
+			return TaskResult{}, fmt.Errorf("inject Graph runtime instructions: %w", err)
+		}
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
 	prompt := BuildPrompt(task, provider)
@@ -6835,7 +6939,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentEnv["MULTICA_DSH_SESSION_ROOT"] = dshSessionRoot
 		agentEnv["DSH_TELEMETRY_DISABLED"] = "1"
 	}
-	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, os.Environ(), agentEnv, agentCustomEnv, d.logger); err != nil {
+	var inheritedEnvironment = os.Environ()
+	if task.Graph != nil {
+		agentEnv, err = graphExecutionEnvironment(env, agentEnv, agentCustomEnv)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		inheritedEnvironment = nil
+	}
+	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, inheritedEnvironment, agentEnv, agentCustomEnv, d.logger); err != nil {
 		return TaskResult{}, err
 	}
 	// The overlay is authoritative once built, so nothing on the command line
@@ -6859,16 +6971,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// daemon never calls agent.New or agent.NewRuntime directly, so the two
 	// factories stay meaning exactly one thing each.
 	backend, err := agent.ResolveBackend(provider, agent.Config{
-		ExecutablePath: entry.Path,
-		LaunchPrefix:   profileFixedArgs,
-		CLIVersion:     resolvedVersion,
-		Env:            agentEnv,
-		Logger:         d.logger,
-		TaskID:         task.ID,
-		RuntimeID:      task.RuntimeID,
-		DaemonVersion:  d.cfg.CLIVersion,
-		CodexVersion:   codexVersion,
-		BuiltinRuntime: !usesCustomProfileCommand,
+		ExecutablePath:     entry.Path,
+		LaunchPrefix:       profileFixedArgs,
+		CLIVersion:         resolvedVersion,
+		Env:                agentEnv,
+		Logger:             d.logger,
+		TaskID:             task.ID,
+		RuntimeID:          task.RuntimeID,
+		DaemonVersion:      d.cfg.CLIVersion,
+		CodexVersion:       codexVersion,
+		BuiltinRuntime:     !usesCustomProfileCommand,
+		ReplaceEnvironment: task.Graph != nil,
+		GraphSkillPaths:    env.GraphSkillPaths,
 	})
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
@@ -6893,6 +7007,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// the ones that do — so a wrapper's subcommand was either dropped on the
 	// floor or spliced in behind `-p` (GH #7046).
 	extraArgs := defaultArgsForProvider(d.cfg, provider)
+	if task.Graph != nil {
+		extraArgs = nil
+	}
 	var mcpConfig json.RawMessage
 	if task.Agent != nil {
 		customArgs = task.Agent.CustomArgs
@@ -6930,7 +7047,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// runtime default instead of failing the task. Catalog lookup errors pass
 	// through so a transient discovery failure does not silently disable a
 	// previously valid user choice.
-	if serviceTier != "" {
+	if serviceTier != "" && task.Graph == nil {
 		ok, err := agent.ValidateServiceTier(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs), model, serviceTier)
 		if err != nil {
 			taskLog.Warn("service_tier: catalog lookup failed; passing through",
@@ -6959,7 +7076,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// model follows config.toml (any model) and so fails closed, dropping the
 	// level here. Discovery errors fail open for resolved models: if we can't
 	// list models, we keep the persisted level and let the CLI object.
-	if thinkingLevel != "" {
+	if thinkingLevel != "" && task.Graph == nil {
 		ok, err := agent.ValidateThinkingLevel(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs), model, thinkingLevel)
 		if err != nil {
 			taskLog.Warn("thinking_level: catalog lookup failed; passing through",
@@ -7012,6 +7129,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		OpenclawMode:           openclawMode,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
+	}
+	if task.Graph != nil {
+		execOpts.Timeout = time.Duration(task.Graph.NodeSpec.Node.TimeoutSeconds) * time.Second
+		execOpts.DisableWholeRunRetry = true
+		execOpts.ResumeSessionID = ""
+		execOpts.ResumeExpected = false
+		execOpts.ResumeContinuityNotice = ""
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
@@ -7070,7 +7194,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
+	if task.Graph != nil {
+		graphExecutionStopped = false
+	}
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+	if task.Graph != nil {
+		graphExecutionStopped = result.ExecutionStopped != nil && *result.ExecutionStopped
+	}
 	if err != nil {
 		return TaskResult{}, err
 	}
@@ -7084,7 +7214,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var retiredSessionID string
 	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
 
-	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
+	if task.Graph == nil && shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
 		firstUsage := result.Usage
 		firstTools := tools
@@ -7219,7 +7349,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// from the (agent_id, issue_id) resume lookup — otherwise a manual
 		// rerun would inherit the same poisoned session and reproduce the
 		// same bad output.
-		if reason, ok := classifyPoisonedOutput(result.Output); ok {
+		if reason, ok := classifyPoisonedOutput(result.Output); ok && task.Graph == nil {
 			taskLog.Warn("agent finished with poisoned fallback output, classifying as blocked",
 				"failure_reason", reason,
 			)

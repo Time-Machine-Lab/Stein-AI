@@ -7,6 +7,16 @@ allowed-tools: Bash(multica *)
 
 # Multica Squads
 
+## Graph exception
+
+Graph V1 executes a published serial sequence of individual agent nodes.
+Squad leader routing, delegation and child-issue completion do not schedule or
+complete Graph nodes. A Graph task uses only its frozen manifest, input and
+runtime binding; do not assign its issue to a squad or create another task.
+Use `multica graph node context --output json`, then submit the structured
+result or blocker through `multica graph node submit` / `graph node block`.
+The squad operations below apply to ordinary issues.
+
 ## Quick start
 
 If debugging why a squad did or did not run, inspect first:

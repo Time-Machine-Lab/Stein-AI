@@ -46,6 +46,8 @@ var codexModelsCacheConfigFiles = []string{
 // CodexHomeOptions carries optional inputs for prepareCodexHomeWithOpts that
 // affect the generated per-task config.toml.
 type CodexHomeOptions struct {
+	// GraphIsolated excludes all ambient context and permits only live provider transport/auth.
+	GraphIsolated bool
 	// CodexVersion is the detected Codex CLI version (e.g. "0.121.0"). Empty
 	// means unknown; on macOS, unknown is treated as "probably broken" so the
 	// daemon falls back to danger-full-access for network access. See
@@ -196,6 +198,9 @@ func classifyPerTaskWindowsSandbox(configFile string, configSyncErr error, share
 // config files are copied (isolated). The per-task config.toml gets a
 // daemon-managed sandbox block picked by codexSandboxPolicyFor.
 func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
+	if opts.GraphIsolated {
+		return prepareGraphCodexHome(codexHome, opts, logger)
+	}
 	sharedHome := resolveSharedCodexHome()
 	freshHome := false
 	if _, err := os.Lstat(codexHome); os.IsNotExist(err) {

@@ -471,6 +471,11 @@ func main() {
 	// Start background sweeper to mark stale runtimes as offline.
 	go runRuntimeSweeper(sweepCtx, pool, queries, liveness, taskSvc, bus)
 	go heartbeatScheduler.Run(sweepCtx)
+	if h.GraphService != nil {
+		h.GraphService.NewRunsEnabled = os.Getenv("MULTICA_GRAPH_DISABLE_NEW_RUNS") != "true"
+		h.GraphService.AdvanceEnabled = os.Getenv("MULTICA_GRAPH_DISABLE_ADVANCEMENT") != "true"
+		go h.GraphService.RunCoordinator(sweepCtx)
+	}
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
 	if h.WebhookDeliveryWorker != nil {

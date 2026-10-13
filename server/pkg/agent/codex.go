@@ -832,6 +832,10 @@ func isCodexBareTomlKey(s string) bool {
 	return true
 }
 
+func codexWholeRunRetryAllowed(opts ExecOptions, result Result, attempt int) bool {
+	return !opts.DisableWholeRunRetry && attempt < 2 && (result.codexInitializeRetrySafe || result.codexStartupRefreshRetrySafe)
+}
+
 func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	firstSession, err := b.executeOnce(ctx, prompt, opts, 1)
 	if err != nil {
@@ -893,7 +897,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			case result.codexStartupRefreshRetrySafe:
 				retryReason = "model_catalog_refresh"
 			}
-			if retryReason == "" || attempt == 2 {
+			if !codexWholeRunRetryAllowed(opts, result, attempt) {
 				flushHeldPins()
 				resCh <- result
 				return
@@ -1046,6 +1050,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		cmd.Dir = opts.Cwd
 	}
 	cmd.Env = buildEnv(b.cfg.Env)
+	if b.cfg.ReplaceEnvironment {
+		cmd.Env = make([]string, 0, len(b.cfg.Env))
+		for key, value := range b.cfg.Env {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -1339,6 +1349,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		defer close(msgCh)
 		defer close(resCh)
 		defer drainAndWait()
+		publishResult := func(result Result) {
+			drainAndWait()
+			stopped := cleanupConfirmed
+			result.ExecutionStopped = &stopped
+			resCh <- result
+		}
 
 		startTime := time.Now()
 		finalStatus := "completed"
@@ -1387,11 +1403,21 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				finalError += "; retry suppressed: process-tree cleanup cannot be confirmed on this platform"
 			}
 			b.cfg.Logger.Warn("codex lifecycle", "phase", "initialize_failure", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", initializeLatency.Round(time.Millisecond).String(), "semantic_activity", semanticObserved.Load(), "cleanup_confirmed", cleanupConfirmed, "retry_safe", retrySafe)
-			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds(), codexInitializeRetrySafe: retrySafe}
+			publishResult(Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds(), codexInitializeRetrySafe: retrySafe})
 			return
 		}
 		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_response", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", time.Since(initializeStarted).Round(time.Millisecond).String())
 		c.notify("initialized")
+		if b.cfg.ReplaceEnvironment {
+			preflightCtx, stopPreflight := context.WithTimeout(runCtx, 30*time.Second)
+			err := enforceCodexGraphSkills(preflightCtx, c.request, opts.Cwd, b.cfg.GraphSkillPaths)
+			stopPreflight()
+			if err != nil {
+				drainAndWait()
+				publishResult(Result{Status: "failed", Error: err.Error(), DurationMs: time.Since(startTime).Milliseconds()})
+				return
+			}
+		}
 
 		// 2. Start a new thread, or resume the prior one for this issue. When
 		// resume fails (thread GCed on the server, schema drift, etc.) we fall
@@ -1432,12 +1458,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					"stderr_bare_timeout_count", classification.bareTimeout,
 				)
 			}
-			resCh <- Result{
+			publishResult(Result{
 				Status:         finalStatus,
 				Error:          finalError,
 				DurationMs:     time.Since(startTime).Milliseconds(),
 				ResumeRejected: isCodexResumeOverflow(opts, err),
-			}
+			})
 			return
 		}
 		c.threadID = threadID
@@ -1510,7 +1536,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 				finalStatus = "failed"
 				finalError = withAgentStderr(fmt.Sprintf("codex turn/start failed: %v", err), "codex", sanitizeCodexDiagnostic(stderrBuf.Tail()))
-				resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
+				publishResult(Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()})
 				return
 			}
 		}
@@ -1748,7 +1774,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			usageMap = map[string]TokenUsage{model: u}
 		}
 
-		resCh <- Result{
+		publishResult(Result{
 			Status:                       finalStatus,
 			Output:                       finalOutput,
 			Error:                        finalError,
@@ -1756,7 +1782,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			DurationMs:                   duration.Milliseconds(),
 			Usage:                        usageMap,
 			codexStartupRefreshRetrySafe: startupRefreshRetrySafe,
-		}
+		})
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil

@@ -93,6 +93,8 @@
     "./quick-actions/queries": "./quick-actions/queries.ts",
     "./quick-actions/mutations": "./quick-actions/mutations.ts",
     "./autopilots": "./autopilots/index.ts",
+    "./graphs": "./graphs/index.ts",
+    "./graphs/schemas": "./graphs/schemas.ts",
     "./autopilots/queries": "./autopilots/queries.ts",
     "./autopilots/mutations": "./autopilots/mutations.ts",
     "./pins": "./pins/index.ts",

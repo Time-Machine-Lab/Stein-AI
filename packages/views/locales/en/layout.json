@@ -1,5 +1,6 @@
 {
   "nav": {
+    "graphs": "Graph",
     "inbox": "Inbox",
     "chat": "Chat",
     "my_issues": "My Issues",

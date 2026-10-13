@@ -472,6 +472,11 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		}
 	}
 
+	graphRefs := make([]*IssueResponse, len(responseRows))
+	for i := range responseRows {
+		graphRefs[i] = &responseRows[i].Issue
+	}
+	baseHandler.hydrateGraphIssues(r.Context(), graphRefs)
 	response := issueTableRowsResponse{
 		QueryFingerprint: compiled.fingerprint,
 		GroupKey:         groupKey,

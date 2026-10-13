@@ -1,5 +1,23 @@
 # Runtimes and repos source map
 
+## Graph V1 execution (2026-10-13)
+
+- `server/internal/handler/graph_claim.go` (`buildGraphClaim`) requires
+  `DaemonCapabilityGraphExecutionV1`, a current task binding and daemon identity.
+- `server/internal/daemon/graph.go` (`validateGraphTask`,
+  `applyFrozenGraphAgent`) enforces frozen agent/skill/configuration and fresh
+  context. `prepareGraphRepository` checks out the manifest's exact commit;
+  `finalizeGraphGit` validates code artifacts, candidate identity and cleanliness.
+- `server/internal/daemon/health.go` checks `graphRepoBindings` before checkout
+  and rejects a repository/ref override for an active Graph task.
+- `server/internal/daemon/graph.go` (`graphStoppedReceipt`, `finalizeGraphTask`)
+  reports stopped evidence. `server/internal/service/graph.go`
+  (`graphRetryAllowed`, `graphValidateReceipt`) keeps an unknown execution from
+  being replaced merely because a queue row is terminal.
+- `server/cmd/multica/cmd_graph.go` implements the node context and staged result
+  commands. `packages/core/graphs/controls.ts` (`isGraphRuntimeSupported`)
+  restricts the V1 picker to Codex with advertised `graph-execution-v1` support.
+
 - `server/cmd/multica/cmd_runtime.go` registers `runtime list`, `usage`, `activity`, `update`, and `delete`.
 - `runtime list` reads `/api/runtimes` and prints `id`, `name`, `runtime_mode`, `provider`, `status`, and `last_seen_at`.
 - `runtime update` posts to `/api/runtimes/{runtime-id}/update`; with `--wait` it polls update status. Initiation enforces runtime-owner or workspace-owner/admin access through `canEditRuntime`; status polling additionally permits that request's immutable initiator so an in-flight poll survives an admin-role change (`server/internal/handler/runtime_update.go` and `runtime.go`).

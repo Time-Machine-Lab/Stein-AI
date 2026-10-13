@@ -14,6 +14,7 @@ import { copyText } from "@multica/ui/lib/clipboard";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
+import { isGraphManagedIssue } from "@multica/core/graphs";
 
 export interface UseIssueActionsResult {
   isPinned: boolean;
@@ -35,6 +36,7 @@ export interface UseIssueActionsResult {
  */
 export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   const { t } = useT("issues");
+  const { t: graphT } = useT("graphs");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -64,10 +66,17 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   const issueAssigneeType = issue?.assignee_type ?? null;
   const issueAssigneeId = issue?.assignee_id ?? null;
   const issueStatus = issue?.status ?? null;
+  const graphManaged = isGraphManagedIssue(issue);
+  const denyGraphAction = useCallback(() => {
+    if (!graphManaged) return false;
+    toast.error(graphT(($) => $.run.graph_managed));
+    return true;
+  }, [graphManaged, graphT]);
 
   const updateField = useCallback(
     (updates: Partial<UpdateIssueRequest>) => {
       if (!issueId) return;
+      if (Object.keys(updates).some((key) => key !== "position") && denyGraphAction()) return;
       // Assigning to an agent/squad may start a run. Route through the
       // pre-trigger confirm modal (preview + optional handoff note + "暂不开始"),
       // which applies the change itself — the four entry points share this one
@@ -109,7 +118,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
         );
       }
     },
-    [issueId, issueStatus, surfaceActions, updateIssue, openModal, t],
+    [issueId, issueStatus, surfaceActions, updateIssue, openModal, t, denyGraphAction],
   );
 
   // Explicit "open it somewhere else" CTA, so the new tab takes focus
@@ -163,6 +172,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   const openCreateSubIssue = useCallback(() => {
     if (!issueId) return;
+    if (denyGraphAction()) return;
     openModal("create-issue", {
       parent_issue_id: issueId,
       parent_issue_identifier: issueIdentifier,
@@ -185,12 +195,14 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     issueProjectId,
     issueAssigneeType,
     issueAssigneeId,
+    denyGraphAction,
   ]);
 
   const openSetParent = useCallback(() => {
     if (!issueId) return;
+    if (denyGraphAction()) return;
     openModal("issue-set-parent", { issueId });
-  }, [openModal, issueId]);
+  }, [openModal, issueId, denyGraphAction]);
 
   // Detach from the parent and promote to a standalone issue. Reversible
   // (Set parent re-links it), non-destructive, and mirrors the clear-date
@@ -202,6 +214,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   // error toast and the optimistic rollback (false confirmation).
   const removeParent = useCallback(() => {
     if (!issueId) return;
+    if (denyGraphAction()) return;
     if (surfaceActions) {
       surfaceActions.updateIssue(
         issueId,
@@ -227,23 +240,25 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
         },
       );
     }
-  }, [issueId, surfaceActions, updateIssue, t]);
+  }, [issueId, surfaceActions, updateIssue, t, denyGraphAction]);
 
   const openAddChild = useCallback(() => {
     if (!issueId) return;
+    if (denyGraphAction()) return;
     openModal("issue-add-child", { issueId });
-  }, [openModal, issueId]);
+  }, [openModal, issueId, denyGraphAction]);
 
   const openDeleteConfirm = useCallback(
     (opts?: { onDeletedFallbackPath?: string }) => {
       if (!issueId) return;
+      if (denyGraphAction()) return;
       openModal("issue-delete-confirm", {
         issueId,
         identifier: issueIdentifier,
         onDeletedFallbackPath: opts?.onDeletedFallbackPath,
       });
     },
-    [openModal, issueId, issueIdentifier],
+    [openModal, issueId, issueIdentifier, denyGraphAction],
   );
 
   return {

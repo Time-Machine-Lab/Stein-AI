@@ -30,7 +30,9 @@ import { Button } from "@multica/ui/components/ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
 import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
-import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, ImageSequenceProvider } from "../../editor";
+import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, ImageSequenceProvider, ReadonlyContent } from "../../editor";
+import { isGraphManagedIssue } from "@multica/core/graphs";
+import { GraphIssueCard } from "../../graphs";
 import { collectImageSequence, type ImageSequenceBlock } from "@multica/core/attachments/image-sequence";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import {
@@ -1920,6 +1922,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Called before the `if (!issue)` early return so hook order stays stable.
   const actions = useIssueActions(issue);
   const handleUpdateField = actions.updateField;
+  const graphManaged = isGraphManagedIssue(issue);
 
   // Labels live in their own query (not on the issue body) — fetch the count
   // here so seeding can decide whether the "Labels" optional row should be
@@ -2094,16 +2097,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         {propertiesOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
           {/* Core props — always rendered. */}
           <PropRow label={t(($) => $.detail.prop_status)}>
-            <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
+            <fieldset disabled={graphManaged}><StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" /></fieldset>
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_assignee)}>
-            <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
+            <fieldset disabled={graphManaged}><AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" /></fieldset>
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_project)}>
-            <ProjectPicker
+            <fieldset disabled={graphManaged}><ProjectPicker
               projectId={issue.project_id}
               onUpdate={handleUpdateField}
-            />
+            /></fieldset>
           </PropRow>
 
           {/* Optional props — rendered only when set on the issue OR added
@@ -2121,13 +2124,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
           {issue.parent_issue_id != null && visibleOptionalProps.has("stage") && (
             <PropRow label={t(($) => $.detail.prop_stage)}>
-              <StagePicker
+              <fieldset disabled={graphManaged}><StagePicker
                 stage={issue.stage}
                 onUpdate={handleUpdateField}
                 maxStage={maxSiblingStage(parentChildIssues)}
                 align="start"
                 defaultOpen={autoOpenProp === "stage"}
-              />
+              /></fieldset>
             </PropRow>
           )}
           {visibleOptionalProps.has("start_date") && (
@@ -2278,7 +2281,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           member. It is NOT filtered by invoke permission: a member can see and
           click an action they cannot run, and the refusal is explained at run
           time rather than by a silently shorter list. */}
-      <QuickActionsSection issueId={issue.id} />
+      {!graphManaged && <QuickActionsSection issueId={issue.id} />}
 
       {/* Parent issue — standalone section, only when the issue has a
           parent. Setting a parent is reachable via the issue actions menu;
@@ -2339,7 +2342,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           own token spend, with the issue total on the section header.
           Self-contained; owns its own collapse state and WS subscriptions.
           Hides itself when there are no runs to show. */}
-      <ExecutionLogSection issueId={id} identifier={issue.identifier} />
+      <ExecutionLogSection issueId={id} identifier={issue.identifier} graphManaged={graphManaged} />
 
       {/* Details — creator and timestamps. Sits below the execution log
           because it is the least-read block in the sidebar: the values
@@ -2548,7 +2551,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 onOpenChange={handleThreadNavOpenChange}
               />
             )}
-            {onDone && issue.status !== "done" && issue.status !== "cancelled" && (
+            {onDone && !graphManaged && issue.status !== "done" && issue.status !== "cancelled" && (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -2647,7 +2650,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             `useStickyComposer`), so it lands here — right where the launcher
             floats — once the reader scrolls to the bottom. */}
         <div className="mx-auto w-full max-w-4xl px-3 py-6 max-md:pb-chat-launcher md:px-8 md:py-8">
-          {titleLazy.active && (
+          <GraphIssueCard issue={issue} />
+          {graphManaged && <h1 className="text-display-sm font-bold leading-snug tracking-tight">{issue.title}</h1>}
+          {!graphManaged && titleLazy.active && (
             <div className={titleLazy.ready ? undefined : "hidden"}>
               <TitleEditor
                 key={`title-${id}`}
@@ -2663,7 +2668,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               />
             </div>
           )}
-          {!titleLazy.ready && (
+          {!graphManaged && !titleLazy.ready && (
             <div
               role="button"
               tabIndex={0}
@@ -2711,7 +2716,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
 
           <div {...descDropZoneProps} className="relative mt-5 rounded-lg">
-            <ContentEditor
+            {graphManaged ? <ReadonlyContent content={issue.description || ""} attachments={descEditorAttachments} /> : <ContentEditor
               ref={descEditorRef}
               key={id}
               value={issue.description || ""}
@@ -2751,7 +2756,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               flushPendingOnUnmount
               currentIssueId={id}
               attachments={descEditorAttachments}
-            />
+            />}
 
             <div className="flex items-center gap-1 mt-3">
               <ReactionBar
@@ -2760,17 +2765,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 onToggle={handleToggleIssueReaction}
                 getActorName={getActorName}
               />
-              <FileUploadButton
+              {!graphManaged && <FileUploadButton
                 size="sm"
                 multiple
                 onSelect={(file) => descEditorRef.current?.uploadFile(file)}
-              />
+              />}
             </div>
             {descDragOver && <FileDropOverlay />}
           </div>
 
           {/* Sub-issues — Linear-style */}
-          {childIssues.length === 0 && (
+          {!graphManaged && childIssues.length === 0 && (
             <div className="mt-6">
               <button
                 type="button"
@@ -2837,6 +2842,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                             type="button"
                             className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             onClick={() => actions.openCreateSubIssue()}
+                            disabled={graphManaged}
                             aria-label={t(($) => $.detail.add_sub_issue_aria)}
                           >
                             <Plus className="h-4 w-4" />

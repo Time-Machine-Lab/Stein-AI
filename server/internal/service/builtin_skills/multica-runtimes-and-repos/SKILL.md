@@ -7,6 +7,26 @@ allowed-tools: Bash(multica *)
 
 # Multica Runtimes and Repos
 
+## Graph execution
+
+Graph V1 currently supports Codex runtimes advertising `graph-execution-v1`.
+Each attempt starts with a fresh workdir and session, frozen agent/skill
+configuration and one immutable manifest. A prior session, live issue comments,
+squad context or local-directory resource cannot replace that context.
+
+For code nodes the daemon checks out the exact manifest input commit. Work in
+that checkout; do not use `repo checkout --ref` to select another branch or
+repository. `produce_commit` returns a declared local commit for daemon-managed
+publication, while `verify_commit` leaves the candidate unchanged and reports
+its exact tested SHA. `multica graph node context --output json` shows the fixed
+input and manifest; `graph node submit` stages the structured result.
+
+A queued task, failed process or cancelled database status alone is not proof
+that physical execution has stopped. When Graph reports `execution_unknown`,
+do not bypass its retry guard or launch a replacement. The daemon's stopped
+receipt lets the engine decide when retry, progression or detachment is safe.
+The ordinary workdir/session reuse guidance below does not apply to Graph.
+
 ## Quick start
 
 For "agent did not run" or "repo checkout failed", read the chain before changing anything:

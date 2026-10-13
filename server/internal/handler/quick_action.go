@@ -850,6 +850,9 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if h.rejectGraphIssueMutation(w, r, issue) {
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

@@ -35,6 +35,9 @@ export type IssueMetadata = Record<string, IssueMetadataValue>;
 
 export interface Issue {
   id: string;
+  execution_mode?: string;
+  graph_run_id?: string | null;
+  graph_node_run_id?: string | null;
   workspace_id: string;
   number: number;
   identifier: string;
