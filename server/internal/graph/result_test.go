@@ -110,3 +110,28 @@ func TestCanonicalJSONPreservesLargeNumbersAndNormalizesSpelling(t *testing.T) {
 		t.Fatalf("lost numeric identity: %s", a)
 	}
 }
+
+// Artifact identities are persisted in a uuid column. An ID that is not a UUID
+// used to pass submission and then fail reconciliation forever, wedging the
+// run in an unrecoverable loop; it must be rejected when the result is
+// submitted so the agent can correct it.
+func TestResultRejectsNonUUIDArtifactIDAtSubmission(t *testing.T) {
+	n := testDefinition().Nodes[1]
+	n.ExecutionMode = ExecutionProduceCommit
+	id := testIdentity()
+	sha := "3cbd6fad2097feff64ecd57deaa2d6df4f275d21"
+	build := func(artifactID string) Result {
+		return Result{Identity: id, Outcome: OutcomePass, Output: json.RawMessage(`{"summary":"done"}`), Artifacts: []Artifact{{
+			ID: artifactID, Type: ArtifactGitCommit, RepositoryID: "repo", BaseSHA: "d41e3e2254ced0bd5c6d4c0b5fb82dcb772ff442",
+			CommitSHA: sha, ManagedRef: "refs/heads/multica/graphs/run/node/1", ProducerTaskID: id.TaskID,
+		}}}
+	}
+	if err := ValidateResult(n, build("7b0f8f0e-8c53-4a4e-9a58-0d3c1c2f6a11")); err != nil {
+		t.Fatalf("uuid artifact id rejected: %v", err)
+	}
+	for _, bad := range []string{sha, "artifact-1", "not a uuid"} {
+		if err := ValidateResult(n, build(bad)); err == nil {
+			t.Fatalf("artifact id %q accepted at submission", bad)
+		}
+	}
+}

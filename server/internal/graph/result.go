@@ -12,6 +12,7 @@ const ProtocolVersion = 1
 
 var hashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var commitPattern = regexp.MustCompile(`^([a-f0-9]{40}|[a-f0-9]{64})$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type AttemptIdentity struct {
 	RunID               string `json:"run_id"`
@@ -239,6 +240,11 @@ func ValidateResult(node Node, result Result) error {
 	for _, a := range result.Artifacts {
 		if a.ID == "" || seen[a.ID] || a.ProducerTaskID == "" {
 			return invalid("artifacts", "requires unique artifact IDs and producer identity")
+		}
+		// Artifact IDs are stored in a uuid column; rejecting anything else here lets
+		// the agent correct it instead of wedging reconciliation after acceptance.
+		if !uuidPattern.MatchString(a.ID) {
+			return invalid("artifacts", "artifact id must be a UUID (generate a new one; it is not the commit SHA)")
 		}
 		seen[a.ID] = true
 		switch a.Type {
