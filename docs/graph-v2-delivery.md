@@ -71,7 +71,7 @@ multica daemon start --workspace-id 06c89e9a-f311-4324-b5d9-9acd3114228b --no-au
 
 ## 验收证据
 
-以下为 2026-10-13 记录，待发布后补齐最终链接与版本。**迁移一栏的编号止于 371，早于 AI 编排迁移 372–374；运行时智能体编排路径尚未做真机验收**，本表没有它的证据行，不要把上表的"已通过"读成该路径已验证。
+以下为 2026-10-13 记录，待发布后补齐最终链接与版本。**迁移一栏的编号止于 371，早于 AI 编排迁移 372–374**：这几行是当时那次运行的记录，不要读成 372–374 也已验证；372–374 的验证见下一小节。运行时智能体编排路径的首轮真机验收已于 2026-10-14 完成，见下一小节——**其中 Codex 执行者一次未能完成**，原因与结论一并列出。
 
 | 验收 | 结果 |
 | --- | --- |
@@ -92,3 +92,22 @@ multica daemon start --workspace-id 06c89e9a-f311-4324-b5d9-9acd3114228b --no-au
 | 本机 Claude Code / DeepSeek | Claude Code 2.1.278 使用真实 `deepseek-v4-flash`，经 Graph 私有目录及原生适配器返回指定验收文本，状态完成、进程停止证据为真，用量为输入 1,437 / 输出 9 tokens；未调用工具或修改仓库。私有任务目录已清理。 |
 | Vega 生产工作区端到端 | 尚未开始；上面的原生模型调用不替代发布、创建、任务执行、产物与审批的完整验收。 |
 | 生产发布 | 尚未发布本次 V2 改动。 |
+
+### 运行时智能体编排真机验收（2026-10-14）
+
+环境：本机全新数据库 `multica`（迁移至 374）、服务端 8090、独立 `acceptance` profile 的 daemon 与 CLI；工作区含两个智能体（ClaudeAuthor/claude、CodexAuthor/codex，均配置显式模型）。**未配置任何 `MULTICA_LLM_*`**：`GET /api/graphs/generation-options` 返回 `{"enabled":false,"runtime_enabled":true}`，生成仍可用。
+
+| 验收 | 结果 |
+| --- | --- |
+| 全新迁移至 374 | 通过。空库用标准迁移入口一次执行到 374，`graph_generation` 及其两个并发索引建立成功。 |
+| 无 `MULTICA_LLM_*` 下由运行时智能体生成 | 通过。Claude 执行者，生成 `be4974ea-5cef-4ee4-81d2-bad0676c8550`：`succeeded`、`submissions: 1`、`schema_version` 2。 |
+| 同一草稿里不同节点使用不同智能体 | 通过。该草稿为 `start → review_code(ab1296b6, Claude) → write_tests(92ae4457, Codex) → end`，两个节点分属两个智能体。 |
+| 发送给模型的内容不含 UUID、凭据、环境变量与指令全文 | 通过。提示词是 `internal/daemon/prompt_graph_authoring.go` 的固定模板，不插入任何请求内容；任务 `context` 只有 `type`/`requester_id`/`workspace_id`；`GET /api/graph/authoring/context` 只回 `request`，其中智能体与审批人**全部是别名**（`agent_default`、`agent_1`、`approver_default`），对该字段做 UUID 正则匹配为假；别名到 UUID 的映射存在 `actors`，只落服务端、不下发。 |
+| 取消 | 通过。对一个真实在飞的 Codex 任务取消：接口 200 `cancelled`，daemon 记录 `task reached terminal state server-side, interrupting agent` → `codex finished status=aborted` → `cleanup ... reaped=true`，`submissions: 0`，无半成品草稿。 |
+| daemon 离线 / 队列超时 | 通过。daemon 停止后提交仍返回 202（资格校验只查智能体可用性，不查运行时存活），该请求 20:00:44 创建、20:03:52 落定，恰为 3 分钟排队预算：`failed` + `generation_timeout`，文案明确指向"运行时没有及时领取任务，检查 daemon 是否在运行"，`submissions: 0`，无 `definition`。 |
+| 并发限制 | 通过。进行中再提交返回 429 `generation_busy`，带 `Retry-After: 10`。 |
+| **Codex 执行者生成一次** | **未完成**。首次尝试因 daemon 未继承 Codex 所需的代理而卡在反复重连；为 daemon 导入代理后任务确实到达了模型（`thread/start`、`turn/start`、收到 agent 消息），但被账号配额拒绝：`You've hit your usage limit ... try again at Oct 20th, 2026`。失败被正确归类上报（`failed` + `generation_failed`，daemon 侧 `failure_reason=agent_error.provider_quota_limit`，`submissions: 0`，无草稿）。本机只有这一个 Codex 运行时与账号，配额恢复前无法补做。 |
+| 非法输出重试耗尽 | **未由真实模型覆盖**。该路径由 `TestGraphAuthoringRejectedDraftsSpendASubmissionAndTheLastEndsTheRequest` 确定性覆盖：4 次提交分别返回 422 `draft_rejected` 与递减的 `remaining_submissions`，耗尽后 `failed` + `generation_invalid`、无草稿、任务被取消，再提交返回 409。用真实 Claude 诱发时，智能体把请求中的指令判为提示注入并**拒绝执行**，改交了一份合法草稿（`succeeded`、`submissions: 1`）——既没有覆盖到耗尽，也正面印证了"请求内容按不可信输入处理"的约束在真实模型上生效。 |
+| 越界智能体 | 由服务端拒绝，`graph_authoring_test.go` 覆盖：不在 `agent_scope` 内的智能体不出现在目录里，草稿引用未列出的别名会被 `draft_rejected` 并附上合法别名清单。 |
+
+本轮**没有**做真实 Codex 端到端与真实模型下的重试耗尽，二者都不能当作已验证。

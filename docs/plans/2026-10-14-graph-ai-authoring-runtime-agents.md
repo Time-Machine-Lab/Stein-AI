@@ -2,7 +2,7 @@
 
 > 设计与偏差清单见 [graph-ai-authoring-runtime-agents](../design/graph-ai-authoring-runtime-agents.md)。设计文档第 6 节的决定已拍板，见该文档的状态行。
 >
-> **进度**：Task 1–4（多智能体目录、专用任务类型与 daemon 提示词、`multica graph draft` 子命令与提交校验、三个异步接口与迁移 372–374）已完成，尚未提交；Task 5（前端）与 Task 6（文档与内置 Skill）已完成；**Task 7 真机验收未做**。因此"验收通过后删除旧路径"这一条也尚未执行——`POST /api/graphs/generate` 与同步服务端 LLM 路径仍在，作为后备。
+> **进度**：Task 1–4（多智能体目录、专用任务类型与 daemon 提示词、`multica graph draft` 子命令与提交校验、三个异步接口与迁移 372–374）、Task 5（前端）与 Task 6（文档与内置 Skill）均已完成并提交；Task 7 真机验收**部分完成**：真实 Claude 生成通过、同一草稿跨两个智能体、取消与 daemon 离线/队列超时、并发 429 均在本机真实环境验证，但真实 Codex 因账号配额耗尽（2026-10-20 恢复）未能完成，非法输出重试耗尽只由 Go 测试覆盖。因此"验收通过后删除旧路径"仍未执行——`POST /api/graphs/generate` 与同步服务端 LLM 路径仍在，作为后备。
 >
 > 另需知悉的两处落地偏差：迁移范围守卫之外，`server/internal/service/graph_integration_test.go` 的私有测试 schema 迁移上界已从 371 提到 374，并新增 `TestGraphIntegrationCoversGraphMigrations` 防止下次漏加。前端错误呈现与计划略有不同：任务级与请求级失败都经 `GraphAiComposer` 的 `role="alert"` 呈现（按错误码本地化），编辑器的 `GraphError` 只负责编辑操作自身的失败，避免同一个错误渲染两次。
 
@@ -72,10 +72,16 @@ Files: `packages/core/graphs/*`（查询与变更、zod schema）、`packages/vi
 
 ## Task 7: 验收
 
-1. 未配置 `MULTICA_LLM_*` 的环境里，用真实 Codex 与 Claude 各生成一次，同一草稿里不同节点使用不同智能体。
-2. 覆盖取消、daemon 离线、超时、非法输出重试耗尽。
-3. 抽查发送给模型的内容，确认没有 UUID、凭据、环境变量与指令全文。
-4. 把证据补进 [V2 使用与发布说明](../graph-v2-delivery.md) 的证据表。
+2026-10-14 在本机全新环境（库迁移至 374、服务端 8090、独立 `acceptance` profile 的 daemon 与 CLI、两个各带显式模型的智能体）执行，未配置任何 `MULTICA_LLM_*`。
+
+1. [x] 真实 Claude 生成一次通过，同一草稿里不同节点使用不同智能体（`start → review_code(Claude) → write_tests(Codex) → end`）。
+   [ ] 真实 Codex 一次**未完成**：修好 daemon 的代理后任务已到达模型，但本机唯一 Codex 账号配额耗尽，2026-10-20 恢复；失败被正确上报且未留草稿。配额恢复后需补做。
+2. [x] 取消（真实在飞任务，daemon 已确认进程停止）、[x] daemon 离线与队列超时（3 分钟预算，落到 `generation_timeout`）、[x] 并发 429。
+   [ ] 非法输出重试耗尽**只由 Go 测试覆盖**：用真实 Claude 诱发时智能体把指令判为提示注入并拒绝执行，改交了合法草稿。
+3. [x] 抽查：提示词是固定模板、任务 `context` 只有三个字段、下发内容里智能体与审批人全是别名，`request` 无 UUID。
+4. [x] 证据已补进 [V2 使用与发布说明](../graph-v2-delivery.md) 的"运行时智能体编排真机验收"小节。
+
+**结论**：验收未全部通过，因此"删除旧路径"与"`apps/mobile` 切到运行时路径"都还没有解冻——前者按约定必须等验收通过。
 
 ---
 
