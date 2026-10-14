@@ -35,7 +35,7 @@ func PrepareGraphWorkspaceDeleteTx(ctx context.Context, tx pgx.Tx, workspaceID s
 		"graph_trigger_event", "graph_trigger",
 		"graph_attachment_upload", "graph_artifact", "graph_approval", "graph_submission",
 		"graph_operation", "graph_run_event", "graph_task_attempt", "graph_issue_owner",
-		"graph_node_run", "graph_run", "graph_version", "graph_definition", "graph_command", "graph_generation",
+		"graph_node_run", "graph_run", "graph_version", "graph_definition", "graph_command",
 	} {
 		if _, err = tx.Exec(ctx, `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
 			return err

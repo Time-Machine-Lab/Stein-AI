@@ -1929,6 +1929,92 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 	return items, nil
 }
 
+const listGraphBuilderSessionsByCreator = `-- name: ListGraphBuilderSessionsByCreator :many
+SELECT cs.id,
+       cs.title,
+       cs.created_at,
+       cs.updated_at,
+       a.runtime_id,
+       COALESCE(lm.content, '') AS last_message_content,
+       COALESCE(lm.role, '') AS last_message_role,
+       lm.created_at AS last_message_at
+FROM chat_session cs
+JOIN agent a ON a.id = cs.agent_id
+LEFT JOIN LATERAL (
+  SELECT content, role, created_at
+    FROM chat_message m
+   WHERE m.chat_session_id = cs.id
+   ORDER BY m.created_at DESC
+   LIMIT 1
+) lm ON true
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND cs.status = 'active'
+  AND a.kind = 'system'
+  AND a.system_key LIKE 'graph_builder:%'
+  AND lm.created_at IS NOT NULL
+ORDER BY lm.created_at DESC
+`
+
+type ListGraphBuilderSessionsByCreatorParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+}
+
+type ListGraphBuilderSessionsByCreatorRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	Title              string             `json:"title"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	RuntimeID          pgtype.UUID        `json:"runtime_id"`
+	LastMessageContent string             `json:"last_message_content"`
+	LastMessageRole    string             `json:"last_message_role"`
+	LastMessageAt      pgtype.Timestamptz `json:"last_message_at"`
+}
+
+// The caller's unfinished Graph-creation conversations.
+//
+// Same construction as ListAgentBuilderSessionsByCreator above, with two
+// deliberate differences. There is no stored draft to carry: the Graph draft
+// lives in the client's own store, and the server never reads or writes it, so
+// this joins only the transcript. And a conversation qualifies on a message
+// alone — the agent-creation studio's draft-only case cannot arise here, since
+// nothing about a Graph conversation reaches the server before the first turn.
+//
+// This is a recovery path, not a resume path: the session id normally lives in
+// the client's draft document, so this list matters when that document is gone
+// (cleared storage, another browser) and is the only handle on a carrier that
+// would otherwise be orphaned. Read it as "conversations I left behind", never
+// as "drafts I can get back".
+func (q *Queries) ListGraphBuilderSessionsByCreator(ctx context.Context, arg ListGraphBuilderSessionsByCreatorParams) ([]ListGraphBuilderSessionsByCreatorRow, error) {
+	rows, err := q.db.Query(ctx, listGraphBuilderSessionsByCreator, arg.WorkspaceID, arg.CreatorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGraphBuilderSessionsByCreatorRow{}
+	for rows.Next() {
+		var i ListGraphBuilderSessionsByCreatorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RuntimeID,
+			&i.LastMessageContent,
+			&i.LastMessageRole,
+			&i.LastMessageAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingChatTasksByCreator = `-- name: ListPendingChatTasksByCreator :many
 SELECT atq.id AS task_id, atq.status, atq.chat_session_id, cs.agent_id
 FROM agent_task_queue atq

@@ -1559,9 +1559,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/graphs", h.CreateGraph)
 			r.Get("/api/graphs/generation-options", h.GetGraphGenerationOptions)
 			r.Post("/api/graphs/generate", h.GenerateGraph)
-			r.Post("/api/graphs/generations", h.CreateGraphGeneration)
-			r.Get("/api/graphs/generations/{generationId}", h.GetGraphGeneration)
-			r.Post("/api/graphs/generations/{generationId}/cancel", h.CancelGraphGeneration)
 			r.Get("/api/graphs/{graphId}", h.GetGraph)
 			r.Put("/api/graphs/{graphId}", h.UpdateGraph)
 			r.Post("/api/graphs/{graphId}/validate", h.ValidateGraph)
@@ -1582,8 +1579,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/graph/node/context", h.GraphNodeContext)
 			r.Post("/api/graph/node/submissions", h.SubmitGraphNode)
 			r.Post("/api/graph/node/block", h.BlockGraphNode)
-			r.Get("/api/graph/authoring/context", h.GetGraphAuthoringContext)
-			r.Post("/api/graph/authoring/draft", h.SubmitGraphAuthoringDraft)
 
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
@@ -1833,6 +1828,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Autosaved configuration, including edits the user has typed
 				// but not sent. Read back through the list above.
 				r.Put("/{sessionId}/draft", h.SaveAgentBuilderDraft)
+			})
+
+			r.Route("/api/graph-builder/sessions", func(r chi.Router) {
+				// Graph-design conversations. Same hidden-carrier mechanism as
+				// the agent builder above, so the same two routes: start one,
+				// and find one that storage no longer points at. Messages,
+				// streaming, stop, archive and delete all go through the
+				// ordinary chat routes.
+				r.Get("/", h.ListGraphBuilderSessions)
+				r.Post("/", h.CreateGraphBuilderSession)
 			})
 
 			// Skills

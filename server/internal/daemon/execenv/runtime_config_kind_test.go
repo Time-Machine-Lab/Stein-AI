@@ -15,7 +15,6 @@ func TestClassifyTask(t *testing.T) {
 		want taskKind
 	}{
 		{"chat", TaskContextForEnv{ChatSessionID: "c"}, kindChat},
-		{"graph-authoring", TaskContextForEnv{GraphAuthoring: true}, kindGraphAuthoring},
 		{"quick-create", TaskContextForEnv{QuickCreatePrompt: "p"}, kindQuickCreate},
 		{"autopilot", TaskContextForEnv{AutopilotRunID: "r"}, kindAutopilotRunOnly},
 		{"issue-comment-triggered", TaskContextForEnv{IssueID: "i", TriggerCommentID: "c"}, kindIssue},
@@ -23,8 +22,6 @@ func TestClassifyTask(t *testing.T) {
 		{"issue-bare", TaskContextForEnv{}, kindIssue},
 		{"tiebreak-chat-vs-quick", TaskContextForEnv{ChatSessionID: "c", QuickCreatePrompt: "p"}, kindChat},
 		{"tiebreak-quick-vs-autopilot", TaskContextForEnv{QuickCreatePrompt: "p", AutopilotRunID: "r"}, kindQuickCreate},
-		{"tiebreak-chat-vs-graph-authoring", TaskContextForEnv{ChatSessionID: "c", GraphAuthoring: true}, kindChat},
-		{"tiebreak-graph-authoring-vs-quick", TaskContextForEnv{GraphAuthoring: true, QuickCreatePrompt: "p"}, kindGraphAuthoring},
 		{"tiebreak-autopilot-vs-comment", TaskContextForEnv{AutopilotRunID: "r", IssueID: "i", TriggerCommentID: "c"}, kindAutopilotRunOnly},
 	}
 	for _, tc := range cases {
@@ -50,7 +47,6 @@ func TestTaskKindHasIssueContext(t *testing.T) {
 		{kindAutopilotRunOnly, false},
 		{kindQuickCreate, false},
 		{kindChat, false},
-		{kindGraphAuthoring, false},
 	}
 	for _, tc := range cases {
 		if got := tc.kind.hasIssueContext(); got != tc.want {
@@ -133,22 +129,16 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		kindIssue: true, kindAutopilotRunOnly: true,
 		kindQuickCreate: true, kindChat: true,
 	}
-	// Graph authoring never touches an issue, so it joins every always-on
-	// section but neither the issue-body rule nor the repository list.
-	includingAuthoring := map[taskKind]bool{
-		kindIssue: true, kindAutopilotRunOnly: true,
-		kindQuickCreate: true, kindChat: true, kindGraphAuthoring: true,
-	}
 	issueKinds := map[taskKind]bool{kindIssue: true}
 	checks := []sectionCheck{
-		{"# Multica Agent Runtime", includingAuthoring},
-		{"## Background Task Safety", includingAuthoring},
-		{"## Agent Identity", includingAuthoring},
-		{"## Available Commands", includingAuthoring},
+		{"# Multica Agent Runtime", allKinds},
+		{"## Background Task Safety", allKinds},
+		{"## Agent Identity", allKinds},
+		{"## Available Commands", allKinds},
 		{"## Issue Body Formatting", allKinds},
-		{"### Workflow", includingAuthoring},
-		{"## Important: Always Use the `multica` CLI", includingAuthoring},
-		{"## Output", includingAuthoring},
+		{"### Workflow", allKinds},
+		{"## Important: Always Use the `multica` CLI", allKinds},
+		{"## Output", allKinds},
 		{"## Comment Formatting", issueKinds},
 		{"## Repositories", map[taskKind]bool{
 			kindIssue: true, kindAutopilotRunOnly: true, kindChat: true,
@@ -158,7 +148,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		{"## Sub-issue Creation", issueKinds},
 		// Quick-create included: it used to be skipped here and carry its own
 		// copy in issue_context.md, which nothing read. One index, one place.
-		{"## Skills", includingAuthoring},
+		{"## Skills", allKinds},
 		{"## Mentions", issueKinds},
 		{"## Attachments", issueKinds},
 	}
@@ -167,8 +157,6 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		kindChat: {ChatSessionID: "c-1", AgentName: "Eve", AgentID: "eve-1",
 			Repos: baseRepo, AgentSkills: baseSkill},
 		kindQuickCreate: {QuickCreatePrompt: "p", AgentName: "Eve", AgentID: "eve-1",
-			Repos: baseRepo, AgentSkills: baseSkill},
-		kindGraphAuthoring: {GraphAuthoring: true, AgentName: "Eve", AgentID: "eve-1",
 			Repos: baseRepo, AgentSkills: baseSkill},
 		kindAutopilotRunOnly: {AutopilotRunID: "r-1", AgentName: "Eve", AgentID: "eve-1",
 			Repos: baseRepo, AgentSkills: baseSkill},

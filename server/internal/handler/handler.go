@@ -165,7 +165,6 @@ type Handler struct {
 	Bus                    *events.Bus
 	TaskService            *service.TaskService
 	GraphService           *service.GraphService
-	GraphGeneration        *service.GraphGenerationService
 	PluginService          *service.PluginService
 	IssueService           *service.IssueService
 	AutopilotService       *service.AutopilotService
@@ -321,7 +320,11 @@ type Handler struct {
 	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
-	LLM             *llm.Client
+	LLM *llm.Client
+	// graphGeneration bounds concurrency and repeats on the legacy synchronous
+	// authoring endpoint. It is not an authoring budget: it exists because that
+	// endpoint spends a server-side model call per request, and a client loop
+	// would otherwise be unbounded. The chat-based path has no such gate.
 	graphGeneration *graphGenerationGate
 	// VCSSecretBox encrypts/decrypts per-workspace Git provider access tokens and
 	// webhook secrets at rest (Forgejo / Gitea / GitLab). Nil when
@@ -421,9 +424,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	h.GraphService = service.NewGraphService(queries, txStarter)
-	if executor != nil {
-		h.GraphGeneration = service.NewGraphGenerationService(queries, txStarter, executor, taskSvc, bus)
-	}
 	h.TaskService.Graph = h.GraphService
 	h.GraphService.PrepareNode = h.prepareGraphNode
 	h.GraphService.PrepareRun = h.prepareGraphRun

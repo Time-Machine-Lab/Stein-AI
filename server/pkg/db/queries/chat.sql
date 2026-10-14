@@ -193,6 +193,46 @@ WHERE cs.workspace_id = $1
 -- configuration was last written so it still lands in activity order.
 ORDER BY COALESCE(lm.created_at, d.updated_at, cs.updated_at) DESC;
 
+-- name: ListGraphBuilderSessionsByCreator :many
+-- The caller's unfinished Graph-creation conversations.
+--
+-- Same construction as ListAgentBuilderSessionsByCreator above, with two
+-- deliberate differences. There is no stored draft to carry: the Graph draft
+-- lives in the client's own store, and the server never reads or writes it, so
+-- this joins only the transcript. And a conversation qualifies on a message
+-- alone — the agent-creation studio's draft-only case cannot arise here, since
+-- nothing about a Graph conversation reaches the server before the first turn.
+--
+-- This is a recovery path, not a resume path: the session id normally lives in
+-- the client's draft document, so this list matters when that document is gone
+-- (cleared storage, another browser) and is the only handle on a carrier that
+-- would otherwise be orphaned. Read it as "conversations I left behind", never
+-- as "drafts I can get back".
+SELECT cs.id,
+       cs.title,
+       cs.created_at,
+       cs.updated_at,
+       a.runtime_id,
+       COALESCE(lm.content, '') AS last_message_content,
+       COALESCE(lm.role, '') AS last_message_role,
+       lm.created_at AS last_message_at
+FROM chat_session cs
+JOIN agent a ON a.id = cs.agent_id
+LEFT JOIN LATERAL (
+  SELECT content, role, created_at
+    FROM chat_message m
+   WHERE m.chat_session_id = cs.id
+   ORDER BY m.created_at DESC
+   LIMIT 1
+) lm ON true
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND cs.status = 'active'
+  AND a.kind = 'system'
+  AND a.system_key LIKE 'graph_builder:%'
+  AND lm.created_at IS NOT NULL
+ORDER BY lm.created_at DESC;
+
 -- name: UpdateChatSessionTitle :one
 UPDATE chat_session SET title = $2, updated_at = now()
 WHERE id = $1

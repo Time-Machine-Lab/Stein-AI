@@ -153,9 +153,6 @@ func buildPromptBody(task Task, provider string) string {
 	if task.AutopilotRunID != "" {
 		return buildAutopilotPrompt(task)
 	}
-	if task.GraphAuthoring {
-		return buildGraphAuthoringPrompt(task)
-	}
 	if task.QuickCreatePrompt != "" {
 		return buildQuickCreatePrompt(task)
 	}

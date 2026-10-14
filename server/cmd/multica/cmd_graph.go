@@ -96,14 +96,6 @@ func newGraphCommand() *cobra.Command {
 	graphMutationFlags(detach, false)
 	node := &cobra.Command{Use: "node", Short: "Operate only on the current Graph task"}
 	cmd.AddCommand(node)
-	draft := &cobra.Command{Use: "draft", Short: "Read an AI authoring request and submit a Graph draft (authoring tasks only)", Long: "Commands for the agent that serves an AI Graph authoring request. They only work with the task-scoped credential of that task: read the request with `context`, then hand in one definition with `submit`. A draft is never saved, published or run by these commands."}
-	cmd.AddCommand(draft)
-	draft.AddCommand(&cobra.Command{Use: "context", Short: "Read the authoring request: contract, requirements, team and limits", Args: cobra.NoArgs, RunE: runGraphDraftContext})
-	submit := &cobra.Command{Use: "submit", Short: "Submit one Graph definition for validation", Long: "Validate one Graph definition (schema_version 2). An accepted draft is stored for the requester to review. A rejected one prints the reason and spends one of the limited submissions: fix the file and submit again.", Args: cobra.NoArgs, RunE: runGraphDraftSubmit}
-	submit.Flags().String("file", "", "Graph definition JSON file, or - for stdin")
-	submit.Flags().String("summary", "", "One sentence saying what the draft does or changes")
-	_ = submit.MarkFlagRequired("file")
-	draft.AddCommand(submit)
 	node.AddCommand(&cobra.Command{Use: "context", Short: "Read the current attempt's fixed input and execution manifest", Args: cobra.NoArgs, RunE: runGraphNodeContext})
 	comment := &cobra.Command{Use: "comment", Short: "Post a diagnostic comment on the current Graph node issue", Long: "Post a diagnostic comment on the current Graph node issue using its scoped context. Comments do not change fixed input, schedule work or submit results.", Args: cobra.NoArgs, RunE: runGraphNodeComment}
 	comment.Flags().String("body", "", "Diagnostic comment text (decodes \\n, \\r, \\t, \\\\)")
@@ -466,46 +458,6 @@ func runGraphNodeContext(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 	var response json.RawMessage
 	if err := client.GetJSON(ctx, "/api/graph/node/context", &response); err != nil {
-		return err
-	}
-	return graphPrint(cmd, response)
-}
-
-func runGraphDraftContext(cmd *cobra.Command, _ []string) error {
-	client, err := graphCLIClient(cmd, true)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := cli.APIContext(cmd.Context())
-	defer cancel()
-	var response json.RawMessage
-	if err := client.GetJSON(ctx, "/api/graph/authoring/context", &response); err != nil {
-		return err
-	}
-	return graphPrint(cmd, response)
-}
-
-// graphDraftSubmitBody carries the definition verbatim: the server, not the
-// CLI, owns validation, so a draft is never rewritten on its way in.
-type graphDraftSubmitBody struct {
-	Definition json.RawMessage `json:"definition"`
-	Summary    string          `json:"summary,omitempty"`
-}
-
-func runGraphDraftSubmit(cmd *cobra.Command, _ []string) error {
-	raw, err := readGraphJSONFile(cmd, "file")
-	if err != nil {
-		return err
-	}
-	client, err := graphCLIClient(cmd, true)
-	if err != nil {
-		return err
-	}
-	summary, _ := cmd.Flags().GetString("summary")
-	ctx, cancel := cli.APIContext(cmd.Context())
-	defer cancel()
-	var response json.RawMessage
-	if err := client.PostJSON(ctx, "/api/graph/authoring/draft", graphDraftSubmitBody{Definition: raw, Summary: strings.TrimSpace(summary)}, &response); err != nil {
 		return err
 	}
 	return graphPrint(cmd, response)

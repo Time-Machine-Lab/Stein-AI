@@ -1005,9 +1005,6 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.AutopilotRunID != "" {
 		return renderAutopilotContext(ctx)
 	}
-	if ctx.GraphAuthoring {
-		return renderGraphAuthoringContext()
-	}
 	if ctx.QuickCreatePrompt != "" {
 		return renderQuickCreateContext(ctx)
 	}
@@ -1051,17 +1048,6 @@ func renderQuickCreateContext(ctx TaskContextForEnv) string {
 	b.WriteString("> ")
 	b.WriteString(ctx.QuickCreatePrompt)
 	b.WriteString("\n\n")
-	return b.String()
-}
-
-// renderGraphAuthoringContext renders issue_context.md for Graph authoring
-// tasks. The request is never written to disk: it is read through the CLI so
-// that what the agent sees is always the server's current copy.
-func renderGraphAuthoringContext() string {
-	var b strings.Builder
-	b.WriteString("# Graph Authoring\n\n")
-	b.WriteString("**Trigger:** AI Graph authoring request\n\n")
-	b.WriteString("Run `multica graph draft context` to read the request, then submit one Graph definition with `multica graph draft submit --file <path>`. There is no issue for this task.\n\n")
 	return b.String()
 }
 

@@ -174,7 +174,7 @@ func NewAPIClient(baseURL, workspaceID, token string) *APIClient {
 // which keeps signing regardless of this capability — so the signature in list
 // payloads was pure cost: raw bytes, a per-attachment RSA sign, and bytes that
 // differ on every read and therefore defeat agent prompt caching.
-const clientCapabilities = "stable_attachment_urls,graph-node-submit-v1,graph-authoring-v1"
+const clientCapabilities = "stable_attachment_urls,graph-node-submit-v1"
 
 func (c *APIClient) setHeaders(req *http.Request) {
 	req.Header.Set("X-Client-Capabilities", clientCapabilities)

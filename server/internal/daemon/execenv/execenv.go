@@ -187,7 +187,6 @@ type TaskContextForEnv struct {
 	AutopilotSource         string
 	AutopilotTriggerPayload string
 	QuickCreatePrompt       string // non-empty for quick-create tasks
-	GraphAuthoring          bool   // true for AI Graph authoring tasks (no issue; the request is read through the CLI)
 	HandoffNote             string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
 	IsSquadLeader           bool   // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
@@ -981,9 +980,6 @@ const (
 	GCKindChat         GCMetaKind = "chat"
 	GCKindAutopilotRun GCMetaKind = "autopilot_run"
 	GCKindQuickCreate  GCMetaKind = "quick_create"
-	// GCKindGraphAuthoring dirs are keyed on their own task row, exactly like
-	// quick-create: the task has no issue, chat or autopilot parent.
-	GCKindGraphAuthoring GCMetaKind = "graph_authoring"
 )
 
 // GCMeta is persisted to .gc_meta.json inside the env root so the GC loop

@@ -94,7 +94,7 @@ func validateGraphTask(task Task) error {
 	if task.Graph.Identity.TaskID != task.ID || task.Graph.NodeSpec.Node.AgentID != task.AgentID {
 		return fmt.Errorf("Graph task identity mismatch")
 	}
-	if task.PriorSessionID != "" || task.PriorWorkDir != "" || task.TriggerCommentID != "" || len(task.CoalescedCommentIDs) > 0 || task.ChatSessionID != "" || task.AutopilotRunID != "" || task.QuickCreatePrompt != "" || task.GraphAuthoring || task.SquadID != "" || task.IsLeaderTask {
+	if task.PriorSessionID != "" || task.PriorWorkDir != "" || task.TriggerCommentID != "" || len(task.CoalescedCommentIDs) > 0 || task.ChatSessionID != "" || task.AutopilotRunID != "" || task.QuickCreatePrompt != "" || task.SquadID != "" || task.IsLeaderTask {
 		return fmt.Errorf("Graph attempts require a fresh, dedicated execution context")
 	}
 	for _, resource := range task.ProjectResources {

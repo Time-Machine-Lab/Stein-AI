@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/graph"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
@@ -99,13 +100,37 @@ func (h *Handler) GetGraphGenerationOptions(w http.ResponseWriter, r *http.Reque
 	if _, ok = h.workspaceMember(w, r, ws); !ok {
 		return
 	}
-	// enabled reports the legacy server-model path; runtime_enabled is present
-	// only when this server can serve authoring requests through runtime agents.
-	options := map[string]bool{"enabled": h.LLM != nil && h.LLM.Enabled() && h.graphGeneration != nil}
-	if h.GraphGeneration != nil {
-		options["runtime_enabled"] = true
+	// enabled reports the legacy server-model path, which every build still has.
+	// builder_enabled reports the chat-based path added alongside it. The two are
+	// reported separately so either direction of version skew degrades safely: a
+	// client that does not know builder_enabled falls back to the legacy form, and
+	// a client that does not know enabled still refuses to call a path this server
+	// may not have.
+	//
+	// The old runtime_enabled flag is gone with the pipeline it advertised. A
+	// client built against it simply stops seeing the flag and falls back, which
+	// is why removing it is safe rather than a breaking change.
+	options := map[string]bool{
+		"enabled":         h.LLM != nil && h.LLM.Enabled() && h.graphGeneration != nil,
+		"builder_enabled": true,
 	}
 	writeJSON(w, http.StatusOK, options)
+}
+
+// graphAgentEligible runs the publication-eligibility checks for one agent
+// without publishing anything, so a caller can refuse an unusable agent before
+// spending an upstream model call on it. The read transaction is released
+// before that call.
+func (h *Handler) graphAgentEligible(ctx context.Context, ws, user string, agent db.Agent) error {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = h.prepareGraphNode(ctx, tx, ws, user, graph.Node{Type: graph.NodeTypeAgent, AgentID: uuidToString(agent.ID)})
+	if rollbackErr := tx.Rollback(ctx); err == nil {
+		err = rollbackErr
+	}
+	return err
 }
 
 func (h *Handler) GenerateGraph(w http.ResponseWriter, r *http.Request) {
