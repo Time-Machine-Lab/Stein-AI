@@ -71,12 +71,17 @@ export interface GraphDefinition {
   layout?: GraphLayout;
 }
 
+export interface GraphAuthoringMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface GraphGenerationRequest {
   prompt: string;
   agentId: string;
   approverId: string;
   currentDefinition?: GraphDefinition;
-  messages?: { role: "user" | "assistant"; content: string }[];
+  messages?: GraphAuthoringMessage[];
 }
 
 export interface GraphGenerationResult {
@@ -84,8 +89,47 @@ export interface GraphGenerationResult {
   summary?: string;
 }
 
+/** Authoring handed to a runtime agent runs as a task, so it is asynchronous. */
+export type GraphGenerationStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface GraphGenerationFailure {
+  code: string;
+  message: string;
+}
+
+export interface GraphGenerationView {
+  id: string;
+  status: GraphGenerationStatus;
+  /** The default executor the authoring task was queued for. */
+  agentId: string;
+  definition?: GraphDefinition;
+  summary?: string;
+  error?: GraphGenerationFailure;
+  submissions: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GraphGenerationCreateRequest {
+  prompt: string;
+  defaultAgentId: string;
+  /** Optional: an empty scope lets the agent use every agent it may invoke. */
+  agentScope?: string[];
+  approverId: string;
+  currentDefinition?: GraphDefinition;
+  messages?: GraphAuthoringMessage[];
+}
+
 export interface GraphGenerationOptions {
+  /** The legacy server-model path. */
   enabled: boolean;
+  /** Absent on servers that predate the runtime authoring path. */
+  runtimeEnabled?: boolean;
 }
 
 export interface GraphVersion {

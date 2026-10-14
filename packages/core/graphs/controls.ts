@@ -1,4 +1,9 @@
-import type { GraphNodeRun, GraphRun, GraphRunAction } from "./types";
+import type {
+  GraphGenerationOptions,
+  GraphNodeRun,
+  GraphRun,
+  GraphRunAction,
+} from "./types";
 import type { Issue, RuntimeDevice } from "../types";
 
 export function isGraphManagedIssue(
@@ -148,4 +153,26 @@ export function canDetachGraphRun(
     GRAPH_TERMINAL_STATES.has(run.state) &&
     canManageGraphRun(run, actor),
   );
+}
+
+/** Non-terminal generation states. Any other status means the task is done. */
+export const GRAPH_GENERATION_ACTIVE_STATES = new Set(["queued", "running"]);
+
+export function graphGenerationActive(status: string | undefined): boolean {
+  return status !== undefined && GRAPH_GENERATION_ACTIVE_STATES.has(status);
+}
+
+export type GraphGenerationMode = "runtime" | "legacy" | "unavailable";
+
+/**
+ * Runtime authoring takes precedence whenever the server can serve it, because
+ * it is the product path. The legacy server-model endpoint remains the fallback
+ * for self-hosted servers that only configured MULTICA_LLM_*.
+ */
+export function graphGenerationMode(
+  options: GraphGenerationOptions | undefined,
+): GraphGenerationMode {
+  if (options?.runtimeEnabled === true) return "runtime";
+  if (options?.enabled === true) return "legacy";
+  return "unavailable";
 }

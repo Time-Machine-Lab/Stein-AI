@@ -117,6 +117,7 @@ describe("Graph generation API", () => {
       respond(body);
       expect(await new ApiClient("").getGraphGenerationOptions()).toEqual({
         enabled: false,
+        runtimeEnabled: false,
       });
     },
   );
@@ -125,10 +126,147 @@ describe("Graph generation API", () => {
     respond({ enabled: true });
     expect(await new ApiClient("").getGraphGenerationOptions()).toEqual({
       enabled: true,
+      runtimeEnabled: false,
     });
     expect(graphGenerationOptions("a").queryKey).not.toEqual(
       graphGenerationOptions("b").queryKey,
     );
     expect(graphGenerationOptions("").enabled).toBe(false);
+  });
+
+  it.each([
+    [{ runtime_enabled: true }, { enabled: false, runtimeEnabled: true }],
+    [
+      { enabled: true, runtime_enabled: true },
+      { enabled: true, runtimeEnabled: true },
+    ],
+    [{ enabled: "true" }, { enabled: false, runtimeEnabled: false }],
+  ])("folds the two availability signals of %j", async (body, expected) => {
+    respond(body);
+    expect(await new ApiClient("").getGraphGenerationOptions()).toEqual(expected);
+  });
+});
+
+describe("Graph runtime authoring API", () => {
+  const view = {
+    id: "generation-1",
+    status: "queued",
+    agent_id: "agent-1",
+    submissions: 0,
+    created_at: "2026-10-14T09:00:00Z",
+    updated_at: "2026-10-14T09:00:00Z",
+  };
+
+  it("queues a scoped authoring request and parses the queued view", async () => {
+    const fetcher = respond(view);
+    const created = await new ApiClient("").createGraphGeneration({
+      prompt: "Draft a release workflow",
+      defaultAgentId: "agent-1",
+      approverId: "member-1",
+    });
+    expect(fetcher.mock.calls[0]![0]).toBe("/api/graphs/generations");
+    expect(fetcher.mock.calls[0]![1].method).toBe("POST");
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual({
+      prompt: "Draft a release workflow",
+      default_agent_id: "agent-1",
+      approver_id: "member-1",
+    });
+    expect(created).toEqual({
+      id: "generation-1",
+      status: "queued",
+      agentId: "agent-1",
+      definition: undefined,
+      summary: undefined,
+      error: undefined,
+      submissions: 0,
+      createdAt: "2026-10-14T09:00:00Z",
+      updatedAt: "2026-10-14T09:00:00Z",
+    });
+  });
+
+  it("sends the scope, the editable graph, and the conversation when they are present", async () => {
+    const fetcher = respond(view);
+    const messages = [
+      { role: "user" as const, content: "Add a review step" },
+      { role: "assistant" as const, content: "Added one" },
+    ];
+    await new ApiClient("").createGraphGeneration({
+      prompt: "Refine",
+      defaultAgentId: "agent-1",
+      agentScope: ["agent-1", "agent-2"],
+      approverId: "member-1",
+      currentDefinition: definition,
+      messages,
+    });
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual({
+      prompt: "Refine",
+      default_agent_id: "agent-1",
+      agent_scope: ["agent-1", "agent-2"],
+      approver_id: "member-1",
+      current_definition: definitionToWire(definition),
+      messages,
+    });
+  });
+
+  it.each([
+    {},
+    { status: "queued" },
+    { id: 7, status: "queued" },
+    null,
+    "queued",
+  ])("refuses to report a queued generation for malformed body %j", async (body) => {
+    respond(body);
+    await expect(
+      new ApiClient("").createGraphGeneration({
+        prompt: "Draft",
+        defaultAgentId: "agent-1",
+        approverId: "member-1",
+      }),
+    ).rejects.toThrow("Invalid Graph generation response");
+  });
+
+  it("reads a generation, keeping an unrecognized status generic instead of failing the poll", async () => {
+    respond({ ...view, status: "paused", error: undefined });
+    const fetched = await new ApiClient("").getGraphGeneration("generation-1");
+    expect(fetched?.status).toBe("failed");
+    expect(fetched?.error).toBeUndefined();
+  });
+
+  it("keeps a succeeded generation's draft and summary", async () => {
+    respond({
+      ...view,
+      status: "succeeded",
+      definition: definitionToWire(definition),
+      summary: "Added a review step",
+    });
+    const fetched = await new ApiClient("").getGraphGeneration("generation-1");
+    expect(fetched?.definition).toEqual(definition);
+    expect(fetched?.summary).toBe("Added a review step");
+  });
+
+  it("returns null instead of throwing when a generation cannot be read", async () => {
+    respond({ nonsense: true });
+    expect(
+      await new ApiClient("").getGraphGeneration("generation-1"),
+    ).toBeNull();
+  });
+
+  it("cancels the addressed generation", async () => {
+    const fetcher = respond({ ...view, status: "cancelled" });
+    const cancelled = await new ApiClient("").cancelGraphGeneration(
+      "generation-1",
+    );
+    expect(fetcher.mock.calls[0]![0]).toBe(
+      "/api/graphs/generations/generation-1/cancel",
+    );
+    expect(fetcher.mock.calls[0]![1].method).toBe("POST");
+    expect(cancelled.status).toBe("cancelled");
+  });
+
+  it("refuses a cancel response that describes a different generation", async () => {
+    respond({ ...view, id: "generation-2", status: "cancelled" });
+    await expect(
+      new ApiClient("").cancelGraphGeneration("generation-1"),
+    ).rejects.toThrow("Invalid Graph generation response");
   });
 });

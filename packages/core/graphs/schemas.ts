@@ -185,7 +185,69 @@ export const GraphNodeDefinitionSchema: z.ZodType<GraphNodeDefinition> = z.lazy(
       })),
 );
 
-export const GraphGenerationOptionsSchema = z.object({ enabled: z.boolean() });
+// The server omits the whole key when a path is off, so `enabled` keeps its
+// old catch-on-missing behavior and `runtime_enabled` normalizes to a boolean
+// here. Keeping both signals distinct lets the UI prefer the runtime path
+// without pinning the feature to a single backend boolean.
+export const GraphGenerationOptionsSchema = z
+  .object({
+    enabled: z.boolean().catch(false),
+    runtime_enabled: z.boolean().optional(),
+  })
+  .transform((value) => ({
+    enabled: value.enabled,
+    runtimeEnabled: value.runtime_enabled === true,
+  }));
+
+export const GraphGenerationStatusSchema = z.enum([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+
+export const GraphGenerationViewSchema = z
+  .object({
+    id,
+    // The five statuses are exhaustive for this generation of the backend, so
+    // the catch only fires against a newer server. Folding an unknown status
+    // into "failed" stops the poll and offers the generic retry copy, which
+    // beats rejecting the whole view on every poll.
+    status: GraphGenerationStatusSchema.catch("failed"),
+    agent_id: id,
+    // Parsed with the same schema as a stored graph, so the draft reaches the
+    // editor in the shape it expects. `schema_version` is only a number here:
+    // an unsupported version parses fine and is refused by the editor when it
+    // consumes the job, which is where that check belongs.
+    definition: GraphDefinitionSchema.optional(),
+    summary: z.string().optional(),
+    // A malformed error object degrades to no error detail rather than
+    // rejecting the view. `status === "failed"` with no error means the
+    // status itself was unrecognized.
+    error: z
+      .object({
+        code: z.string().catch("generation_failed"),
+        message: z.string().catch(""),
+      })
+      .optional()
+      .catch(undefined),
+    submissions: z.number().int().nonnegative().catch(0),
+    created_at: timestamp,
+    updated_at: timestamp,
+  })
+  .transform((value) => ({
+    id: value.id,
+    status: value.status,
+    agentId: value.agent_id,
+    definition: value.definition,
+    summary: value.summary,
+    error: value.error,
+    submissions: value.submissions,
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+  }));
+
 export const GraphGenerationResultSchema = z.object({
   definition: GraphDefinitionSchema,
   summary: z.string().optional(),

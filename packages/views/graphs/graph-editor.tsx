@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Check,
@@ -20,10 +20,14 @@ import {
   exportGraphDefinition,
   graphDefinitionChanges,
   graphDraftKey,
+  graphGenerationJob,
+  graphGenerationMode,
   graphGenerationOptions,
   importGraphDefinition,
   layoutGraph,
   useArchiveGraph,
+  useCancelGraphGeneration,
+  useCreateGraphGeneration,
   useGenerateGraph,
   useGraphDraftStore,
   usePublishGraph,
@@ -216,6 +220,8 @@ export function GraphEditor({
     members = useQuery(memberListOptions(wsId));
   const generationOptions = useQuery(graphGenerationOptions(wsId));
   const generate = useGenerateGraph(wsId),
+    createGeneration = useCreateGraphGeneration(wsId),
+    cancelGeneration = useCancelGraphGeneration(wsId),
     save = useSaveGraph(wsId),
     validate = useValidateGraph(),
     publish = usePublishGraph(wsId),
@@ -236,11 +242,19 @@ export function GraphEditor({
   const [localError, setLocalError] = useState<Error | null>(null),
     [definitionJSON, setDefinitionJSON] = useState("");
   const [prompt, setPrompt] = useState(""),
-    [generationAgentId, setGenerationAgentId] = useState(""),
-    [generationApproverId, setGenerationApproverId] = useState("");
+    [generationScope, setGenerationScope] = useState<string[]>([]),
+    [generationDefaultAgentId, setGenerationDefaultAgentId] = useState(""),
+    [generationApproverId, setGenerationApproverId] = useState(""),
+    [generationId, setGenerationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<
     NonNullable<GraphGenerationRequest["messages"]>
   >([]);
+  // The definition and description the in-flight authoring task was given. A
+  // proposal compares against the definition the model actually saw, not
+  // against whatever the draft has become by the time the task finishes.
+  const generationBase = useRef(""),
+    generationRequestPrompt = useRef(""),
+    consumedGeneration = useRef<string | null>(null);
   const [proposal, setProposal] = useState<{
     definition: GraphDefinition;
     base: string;
@@ -272,17 +286,30 @@ export function GraphEditor({
         (node) => node.nodeKey === key,
       )?.type === "loop",
   );
-  const generationAgents = (agents.data ?? []).filter(
-    (agent) => !agent.archived_at,
+  const generationAgents = useMemo(
+    () => (agents.data ?? []).filter((agent) => !agent.archived_at),
+    [agents.data],
   );
-  const selectedGenerationAgent =
-    generationAgentId ||
-    (generationAgents.length === 1 ? generationAgents[0]!.id : "");
+  const generationMode = graphGenerationMode(generationOptions.data);
+  const generationJobQuery = useQuery(
+    graphGenerationJob(wsId, generationId ?? ""),
+  );
+  const generationJobView = generationJobQuery.data ?? null;
+  // Runtime authoring scopes explicitly; the legacy path has a single agent, so
+  // its scope is that one agent. The composer reads the same either way.
+  const generationScopeIds =
+    generationMode === "runtime"
+      ? generationScope
+      : generationDefaultAgentId
+        ? [generationDefaultAgentId]
+        : [];
   const selectedGenerationApprover =
     generationApproverId ||
     (members.data?.some((member) => member.id === actor.memberId)
       ? actor.memberId!
       : "");
+  const generationPending =
+    generating || createGeneration.isPending || cancelGeneration.isPending;
   useEffect(() => {
     if (actor.userId)
       useGraphDraftStore
@@ -302,6 +329,58 @@ export function GraphEditor({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [draft?.dirty, draft?.storageError, draft?.storageConflict]);
+  // A workspace with exactly one usable agent preselects it in either mode; with
+  // more than one the choice belongs to the user. Only the runtime path has a
+  // scope to seed — the legacy path has a single agent.
+  useEffect(() => {
+    if (generationMode === "unavailable" || generationAgents.length !== 1) return;
+    const only = generationAgents[0]!.id;
+    if (generationMode === "runtime")
+      setGenerationScope((current) => (current.length ? current : [only]));
+    setGenerationDefaultAgentId((current) => current || only);
+  }, [generationMode, generationAgents]);
+  // The default executor has to stay inside the scope. Removing it hands the
+  // role to the first agent that is still selected.
+  useEffect(() => {
+    if (generationMode !== "runtime" || generationScope.length === 0) return;
+    if (generationScope.includes(generationDefaultAgentId)) return;
+    setGenerationDefaultAgentId(generationScope[0]!);
+  }, [generationMode, generationScope, generationDefaultAgentId]);
+  // The single place a finished authoring task becomes editor state. The request
+  // id, not the derived status, records what has been consumed, so a poll that
+  // repeats a terminal state cannot apply the same proposal twice.
+  useEffect(() => {
+    const view = generationJobView;
+    if (!view || view.id !== generationId) return;
+    if (view.status === "queued" || view.status === "running") return;
+    if (consumedGeneration.current === view.id) return;
+    consumedGeneration.current = view.id;
+    if (view.status !== "succeeded") return;
+    const generated = view.definition;
+    // The definition schema accepts whatever schema_version the server sent, so
+    // a draft this build cannot open is refused here rather than replacing the
+    // editor's draft with something uneditable.
+    if (!generated || ![1, 2].includes(generated.schemaVersion)) {
+      setLocalError(new Error(t(($) => $.production.unsupported)));
+      return;
+    }
+    const exchange: NonNullable<GraphGenerationRequest["messages"]> = [];
+    if (generationRequestPrompt.current)
+      exchange.push({
+        role: "user",
+        content: generationRequestPrompt.current,
+      });
+    exchange.push({
+      role: "assistant",
+      content: view.summary ?? generated.name,
+    });
+    setMessages((current) => [...current, ...exchange]);
+    setProposal({
+      definition: generated,
+      base: generationBase.current,
+      summary: view.summary,
+    });
+  }, [generationId, generationJobView, t]);
   const change = (next: GraphDefinition) => {
     useGraphDraftStore.getState().edit(draftKey, next);
     validate.reset();
@@ -333,8 +412,7 @@ export function GraphEditor({
     }
   }
   async function generateProposal() {
-    if (generating || disabled || generationOptions.data?.enabled !== true)
-      return;
+    if (generating || disabled || generationMode !== "legacy") return;
     setGenerating(true);
     setLocalError(null);
     const current =
@@ -347,7 +425,7 @@ export function GraphEditor({
       ].slice(-20);
       const result = await generate.mutateAsync({
         prompt: prompt.trim(),
-        agentId: selectedGenerationAgent,
+        agentId: generationDefaultAgentId,
         approverId: selectedGenerationApprover,
         ...(current.name.trim() || draft?.dirty
           ? { currentDefinition: current }
@@ -387,6 +465,49 @@ export function GraphEditor({
     } finally {
       setGenerating(false);
     }
+  }
+  async function enqueueGeneration() {
+    if (generationMode !== "runtime" || disabled || generationPending) return;
+    setLocalError(null);
+    const current =
+      useGraphDraftStore.getState().documents[draftKey]?.definition ??
+      definition;
+    generationBase.current = JSON.stringify(current);
+    generationRequestPrompt.current = prompt.trim();
+    try {
+      const view = await createGeneration.mutateAsync({
+        prompt: prompt.trim(),
+        defaultAgentId: generationDefaultAgentId,
+        agentScope: generationScope,
+        approverId: selectedGenerationApprover,
+        ...(current.name.trim() || draft?.dirty
+          ? { currentDefinition: current }
+          : {}),
+        // The conversation so far, without this request: the task reads the
+        // request itself from `prompt`.
+        ...(messages.length ? { messages } : {}),
+      });
+      consumedGeneration.current = null;
+      setGenerationId(view.id);
+    } catch {
+      // The composer renders the failure from the mutation error, and the
+      // description is left untouched so the request can be retried.
+    }
+  }
+  async function cancelGenerationRequest() {
+    if (!generationId) return;
+    try {
+      await cancelGeneration.mutateAsync(generationId);
+    } catch (error) {
+      // A cancel that lost the race against a finishing task is not worth
+      // reporting; the refreshed job state already tells the truth.
+      if (errorCode(error) === "generation_closed") return;
+      setLocalError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+  function startGeneration() {
+    if (generationMode === "runtime") void enqueueGeneration();
+    else void generateProposal();
   }
   async function exportDefinition(download: boolean) {
     const text = exportGraphDefinition(definition);
@@ -547,17 +668,23 @@ export function GraphEditor({
             <GraphAiComposer
               prompt={prompt}
               onPromptChange={setPrompt}
-              agentId={selectedGenerationAgent}
-              onAgentChange={setGenerationAgentId}
+              mode={generationMode}
+              scopeIds={generationScopeIds}
+              onScopeChange={setGenerationScope}
+              defaultAgentId={generationDefaultAgentId}
+              onDefaultAgentChange={setGenerationDefaultAgentId}
               approverId={selectedGenerationApprover}
               onApproverChange={setGenerationApproverId}
               agents={generationAgents}
               members={members.data ?? []}
-              enabled={generationOptions.data?.enabled === true && !disabled}
               loading={generationOptions.isPending}
-              pending={generating}
+              disabled={disabled}
+              pending={generationPending}
+              job={generationJobView}
+              error={createGeneration.error}
               hasDraft={Boolean(definition.name.trim())}
-              onGenerate={() => void generateProposal()}
+              onGenerate={startGeneration}
+              onCancel={() => void cancelGenerationRequest()}
               onManual={() => setMode("editor")}
             />
             {messages.length > 0 && (

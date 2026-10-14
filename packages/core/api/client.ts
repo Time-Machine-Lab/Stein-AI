@@ -218,6 +218,7 @@ import { parseWithFallback } from "./schema";
 import {
   GraphGenerationOptionsSchema,
   GraphGenerationResultSchema,
+  GraphGenerationViewSchema,
   GraphListSchema,
   GraphRecordSchema,
   GraphRunListSchema,
@@ -241,9 +242,11 @@ import type {
   GraphApprovalRequest,
   GraphCommand,
   GraphDefinition,
+  GraphGenerationCreateRequest,
   GraphGenerationOptions,
   GraphGenerationRequest,
   GraphGenerationResult,
+  GraphGenerationView,
   GraphRecord,
   GraphRun,
   GraphRunAction,
@@ -915,7 +918,7 @@ export class ApiClient {
     return parseWithFallback<GraphGenerationOptions>(
       await this.fetch<unknown>("/api/graphs/generation-options"),
       GraphGenerationOptionsSchema,
-      { enabled: false },
+      { enabled: false, runtimeEnabled: false },
       { endpoint: "GET /api/graphs/generation-options" },
     );
   }
@@ -961,6 +964,72 @@ export class ApiClient {
         "Invalid response",
       );
     }
+  }
+
+  async createGraphGeneration(
+    request: GraphGenerationCreateRequest,
+  ): Promise<GraphGenerationView> {
+    const raw = await this.fetch<unknown>("/api/graphs/generations", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: request.prompt,
+        default_agent_id: request.defaultAgentId,
+        ...(request.agentScope ? { agent_scope: request.agentScope } : {}),
+        approver_id: request.approverId,
+        ...(request.currentDefinition
+          ? { current_definition: definitionToWire(request.currentDefinition) }
+          : {}),
+        ...(request.messages ? { messages: request.messages } : {}),
+      }),
+    });
+    const view = parseWithFallback<GraphGenerationView | null>(
+      raw,
+      GraphGenerationViewSchema,
+      null,
+      { endpoint: "POST /api/graphs/generations" },
+    );
+    // This endpoint answers 202, so a malformed body would otherwise create a
+    // generation the client cannot address and the editor would poll an empty
+    // id. Fail loudly instead.
+    if (!view || !raw || typeof raw !== "object" || !("id" in raw))
+      throw new ApiError(
+        "Invalid Graph generation response. Your request was not created.",
+        502,
+        "Invalid response",
+      );
+    return view;
+  }
+
+  async getGraphGeneration(id: string): Promise<GraphGenerationView | null> {
+    return parseWithFallback<GraphGenerationView | null>(
+      await this.fetch<unknown>(
+        `/api/graphs/generations/${encodeURIComponent(id)}`,
+      ),
+      GraphGenerationViewSchema,
+      null,
+      { endpoint: "GET /api/graphs/generations/:id" },
+    );
+  }
+
+  async cancelGraphGeneration(id: string): Promise<GraphGenerationView> {
+    const raw = await this.fetch<unknown>(
+      `/api/graphs/generations/${encodeURIComponent(id)}/cancel`,
+      { method: "POST" },
+    );
+    const view = parseWithFallback<GraphGenerationView | null>(
+      raw,
+      GraphGenerationViewSchema,
+      null,
+      { endpoint: "POST /api/graphs/generations/:id/cancel" },
+    );
+    // Seed only a view that belongs to the job we asked to cancel.
+    if (!view || view.id !== id)
+      throw new ApiError(
+        "Invalid Graph generation response. The request was not cancelled.",
+        502,
+        "Invalid response",
+      );
+    return view;
   }
 
   async listGraphs(): Promise<GraphRecord[]> {

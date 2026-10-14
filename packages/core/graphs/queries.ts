@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import { GRAPH_TERMINAL_STATES } from "./controls";
+import { GRAPH_TERMINAL_STATES, graphGenerationActive } from "./controls";
 import type { GraphSearchParams } from "./types";
 
 export const graphKeys = {
@@ -8,6 +8,8 @@ export const graphKeys = {
   list: (wsId: string) => [...graphKeys.all(wsId), "list"] as const,
   generation: (wsId: string) =>
     [...graphKeys.all(wsId), "generation-options"] as const,
+  generationJob: (wsId: string, id: string) =>
+    [...graphKeys.all(wsId), "generation", id] as const,
   detail: (wsId: string, id: string) =>
     [...graphKeys.all(wsId), "detail", id] as const,
   runs: (wsId: string) => [...graphKeys.all(wsId), "runs"] as const,
@@ -101,6 +103,19 @@ export function graphGenerationOptions(wsId: string) {
     queryFn: () => api.getGraphGenerationOptions(),
     enabled: Boolean(wsId),
     retry: false,
+  });
+}
+
+export function graphGenerationJob(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: graphKeys.generationJob(wsId, id),
+    queryFn: () => api.getGraphGeneration(id),
+    enabled: Boolean(wsId && id),
+    retry: false,
+    // WebSocket events fire on state changes; this poll is the safety net for
+    // a missed event and stops as soon as the task reaches a terminal state.
+    refetchInterval: (query) =>
+      graphGenerationActive(query.state.data?.status) ? 5_000 : false,
   });
 }
 
