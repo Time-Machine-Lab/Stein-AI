@@ -214,9 +214,14 @@ func (s *GraphService) Publish(ctx context.Context, ws, user, id string, revisio
 	if err != nil {
 		return result, err
 	}
-	if err = json.Unmarshal(canonical, &draft.Definition); err != nil {
+	// Decode into a fresh value: unmarshalling over the draft would reuse its node
+	// slots, and canonical ordering can place a node where a differently configured
+	// one used to be, leaving stale optional config (e.g. a loop node with http).
+	var normalized graph.Definition
+	if err = json.Unmarshal(canonical, &normalized); err != nil {
 		return result, err
 	}
+	draft.Definition = normalized
 	if s.PrepareNode == nil {
 		return result, graphError("capability_missing", "Graph snapshot adapter is unavailable")
 	}

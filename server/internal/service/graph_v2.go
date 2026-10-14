@@ -487,6 +487,24 @@ func (s *GraphService) reconcileRunV2(ctx context.Context, tx pgx.Tx, run GraphR
 		}
 	}
 	if run.ControlState == "cancel_requested" {
+		// Effects prepared earlier in this same pass were never sent. Termination may
+		// have been requested after they were prepared (for example by an exhausted
+		// loop budget), so cancel them instead of dispatching after the commit.
+		for _, effect := range effects {
+			if index := graphNodeIndexV2(run, effect.NodeRunID); index >= 0 {
+				n := &run.Nodes[index]
+				if n.Effect != nil && n.Effect.ClaimToken == effect.ClaimToken && n.Effect.State == "dispatched" {
+					now := time.Now().UTC()
+					n.Effect.State = "cancelled"
+					n.State = "cancelled"
+					n.FinishedAt = &now
+				}
+			}
+			<-s.effectSlots
+		}
+		effects = nil
+	}
+	if run.ControlState == "cancel_requested" {
 		allStopped, requested, err := graphDrainV2(ctx, tx, &run)
 		if err != nil {
 			return run, err
