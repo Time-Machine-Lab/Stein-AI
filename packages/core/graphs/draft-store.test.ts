@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createGraphDraftStore, graphDraftKey } from "./draft-store";
+import {
+  createGraphDraftStore,
+  graphDraftKey,
+  type GraphDraftAi,
+} from "./draft-store";
 import { createSerialDefinition } from "./definition";
 import type { StorageAdapter } from "../types/storage";
 
@@ -169,5 +173,109 @@ describe("Graph draft recovery and history", () => {
     restored.getState().clearAll();
     expect(restored.getState().documents).toEqual({});
     expect(storage.getItem(other)).toBeNull();
+  });
+});
+
+const ai: GraphDraftAi = {
+  sessionId: "session",
+  agentId: "carrier",
+  executorId: "agent-1",
+  scopeIds: ["agent-1", "agent-2"],
+  approverId: "member-1",
+  runtimeId: "runtime-1",
+  appliedMessageId: null,
+};
+
+/** The row the store wrote for `key`, or null when nothing was persisted. */
+function stored(storage: StorageAdapter, draftKey: string) {
+  const raw = storage.getItem(draftKey);
+  return raw ? (JSON.parse(raw) as { token: string; ai?: GraphDraftAi }) : null;
+}
+
+describe("Graph draft conversation binding", () => {
+  it("returns to the same conversation after a reload, with the reply it merged", () => {
+    const storage = memoryStorage(),
+      first = createGraphDraftStore(storage);
+    first.getState().open(key, definition, 1);
+    first.getState().bindAi(key, ai);
+    first.getState().edit(key, { ...definition, name: "Drafted" });
+    first.getState().markAiApplied(key, "message-2");
+    const restored = createGraphDraftStore(storage);
+    restored.getState().open(key, definition, 1);
+    expect(restored.getState().documents[key]).toMatchObject({
+      definition: { name: "Drafted" },
+      recovered: true,
+      ai: { ...ai, appliedMessageId: "message-2" },
+    });
+  });
+  it("persists a binding before it has drafted anything", () => {
+    // A refresh in the seconds between starting a conversation and its first
+    // reply has to find it again: the alternative is a second carrier agent
+    // beside an orphaned one.
+    const storage = memoryStorage(),
+      store = createGraphDraftStore(storage);
+    store.getState().open(key, definition, 1);
+    store.getState().bindAi(key, ai);
+    expect(stored(storage, key)?.ai).toEqual(ai);
+    const restored = createGraphDraftStore(storage);
+    restored.getState().open(key, definition, 1);
+    expect(restored.getState().documents[key]?.ai).toEqual(ai);
+  });
+  it("records a merged reply once, on a draft that is already being persisted", () => {
+    const storage = memoryStorage(),
+      store = createGraphDraftStore(storage);
+    store.getState().open(key, definition, 1);
+    store.getState().bindAi(key, ai);
+    store.getState().edit(key, { ...definition, name: "Drafted" });
+    const before = store.getState().documents[key]!.token;
+    store.getState().markAiApplied(key, "message-1");
+    const after = store.getState().documents[key]!.token;
+    expect(after).not.toBe(before);
+    expect(stored(storage, key)?.ai?.appliedMessageId).toBe("message-1");
+    // Re-recording the same reply is what every re-render would do; it must not
+    // burn a storage write and a new token each time.
+    store.getState().markAiApplied(key, "message-1");
+    expect(store.getState().documents[key]!.token).toBe(after);
+  });
+  it("drops a binding written by another build rather than half-reading it", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      key,
+      JSON.stringify({
+        format: 1,
+        token: "t",
+        definition,
+        baseRevision: 1,
+        ai: { ...ai, appliedMessageId: undefined },
+      }),
+    );
+    const store = createGraphDraftStore(storage);
+    store.getState().open(key, definition, 1);
+    expect(store.getState().documents[key]?.ai).toBeNull();
+  });
+  it("forgets the conversation without forgetting the draft, and vice versa", () => {
+    const storage = memoryStorage(),
+      store = createGraphDraftStore(storage);
+    store.getState().open(key, definition, 1);
+    store.getState().bindAi(key, ai);
+    store.getState().clearAi(key);
+    expect(store.getState().documents[key]?.ai).toBeNull();
+    // Nothing was edited, so there is no draft worth recovering — reopening the
+    // graph must not announce one.
+    expect(stored(storage, key)).toBeNull();
+    store.getState().bindAi(key, ai);
+    store.getState().edit(key, { ...definition, name: "Drafted" });
+    store.getState().clearAi(key);
+    expect(store.getState().documents[key]).toMatchObject({
+      ai: null,
+      dirty: true,
+      definition: { name: "Drafted" },
+    });
+    const restored = createGraphDraftStore(storage);
+    restored.getState().open(key, definition, 1);
+    expect(restored.getState().documents[key]).toMatchObject({
+      definition: { name: "Drafted" },
+      ai: null,
+    });
   });
 });

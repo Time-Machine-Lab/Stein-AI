@@ -2,7 +2,6 @@
 
 import {
   ArrowRight,
-  Ban,
   Bot,
   CheckCheck,
   GitBranch,
@@ -12,24 +11,27 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { Agent, MemberWithUser } from "@multica/core/types";
-import {
-  graphGenerationActive,
-  type GraphGenerationMode,
-  type GraphGenerationView,
-} from "@multica/core/graphs";
+import type { GraphGenerationMode } from "@multica/core/graphs";
 import { errorCode } from "@multica/core/api/client";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../i18n";
 import { Field } from "./shared";
-import { GraphActorMultiPicker, GraphActorPicker } from "./graph-actor-picker";
+import { GraphActorPicker } from "./graph-actor-picker";
 
+/**
+ * The one-shot form: describe the workflow, hand it to one agent, get one
+ * proposal back.
+ *
+ * This is the path a deployment without a builder still uses — the server
+ * generates from its own LLM client and the result arrives as a proposal to
+ * apply or discard. Where a builder exists the editor never renders this, and
+ * the conversation replaces both the form and the apply step.
+ */
 export function GraphAiComposer({
   prompt,
   onPromptChange,
   mode,
-  scopeIds,
-  onScopeChange,
   defaultAgentId,
   onDefaultAgentChange,
   approverId,
@@ -39,18 +41,14 @@ export function GraphAiComposer({
   loading,
   disabled,
   pending,
-  job,
   error,
   hasDraft,
   onGenerate,
-  onCancel,
   onManual,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
   mode: GraphGenerationMode;
-  scopeIds: string[];
-  onScopeChange: (values: string[]) => void;
   defaultAgentId: string;
   onDefaultAgentChange: (value: string) => void;
   approverId: string;
@@ -61,14 +59,12 @@ export function GraphAiComposer({
   loading: boolean;
   /** The editor cannot start authoring right now. */
   disabled?: boolean;
-  /** A create or cancel request is in flight. */
+  /** The request is in flight. */
   pending: boolean;
-  job: GraphGenerationView | null;
-  /** The last rejected authoring request, from before any task existed. */
+  /** The last rejected request, from before a task existed. */
   error: unknown;
   hasDraft: boolean;
   onGenerate: () => void;
-  onCancel: () => void;
   onManual: () => void;
 }) {
   const { t } = useT("graphs");
@@ -77,24 +73,18 @@ export function GraphAiComposer({
     t(($) => $.studio.example_release),
     t(($) => $.studio.example_content),
   ];
-  const runtime = mode === "runtime";
   const agentOptions = agents.map((agent) => ({
     value: agent.id,
     label: agent.name,
     avatarUrl: agent.avatar_url,
   }));
-  const active = graphGenerationActive(job?.status);
-  const locked = pending || active;
-  // Failures reach the UI from two places: the task itself (job.error), or a
-  // request refused before a task existed (the mutation error). The request is
-  // the more recent of the two, and React Query clears it on the next attempt.
+  const locked = pending;
+  // The request is the only source of failure on this path: one synchronous
+  // call, so there is no task whose status could also report one.
   const requestCode = errorCode(error);
-  const failureCode = requestCode ?? job?.error?.code;
-  // A status this build does not recognize also lands on "failed", with no
-  // error and no code, so the failure is keyed off the request and the status
-  // rather than off the code alone.
+  const failureCode = requestCode;
   const failureText =
-    error || job?.status === "failed"
+    error
       ? (() => {
           switch (failureCode) {
             case "generation_timeout":
@@ -117,7 +107,6 @@ export function GraphAiComposer({
               // A newer backend can report a code this build does not know.
               // Show what the server said rather than inventing copy for it.
               return (
-                job?.error?.message ||
                 (error instanceof Error ? error.message : "") ||
                 t(($) => $.studio.error_failed)
               );
@@ -156,55 +145,20 @@ export function GraphAiComposer({
                 )}
               </Field>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                {runtime ? (
-                  <>
-                    <Field label={t(($) => $.studio.scope)}>
-                      {(id) => (
-                        <GraphActorMultiPicker
-                          id={id}
-                          label={t(($) => $.studio.scope)}
-                          values={scopeIds}
-                          onChange={onScopeChange}
-                          disabled={locked}
-                          isAgent
-                          placeholder={t(($) => $.studio.choose_agents)}
-                          options={agentOptions}
-                        />
-                      )}
-                    </Field>
-                    <Field label={t(($) => $.studio.default_agent)}>
-                      {(id) => (
-                        <GraphActorPicker
-                          id={id}
-                          label={t(($) => $.studio.default_agent)}
-                          value={defaultAgentId}
-                          onChange={onDefaultAgentChange}
-                          disabled={locked || scopeIds.length === 0}
-                          isAgent
-                          placeholder={t(($) => $.studio.choose_default_agent)}
-                          options={agentOptions.filter((option) =>
-                            scopeIds.includes(option.value),
-                          )}
-                        />
-                      )}
-                    </Field>
-                  </>
-                ) : (
-                  <Field label={t(($) => $.studio.agent)}>
-                    {(id) => (
-                      <GraphActorPicker
-                        id={id}
-                        label={t(($) => $.studio.agent)}
-                        value={defaultAgentId}
-                        onChange={onDefaultAgentChange}
-                        disabled={locked}
-                        isAgent
-                        placeholder={t(($) => $.editor.choose_agent)}
-                        options={agentOptions}
-                      />
-                    )}
-                  </Field>
-                )}
+                <Field label={t(($) => $.studio.agent)}>
+                  {(id) => (
+                    <GraphActorPicker
+                      id={id}
+                      label={t(($) => $.studio.agent)}
+                      value={defaultAgentId}
+                      onChange={onDefaultAgentChange}
+                      disabled={locked}
+                      isAgent
+                      placeholder={t(($) => $.editor.choose_agent)}
+                      options={agentOptions}
+                    />
+                  )}
+                </Field>
                 <Field label={t(($) => $.editor.approver)}>
                   {(id) => (
                     <GraphActorPicker
@@ -226,15 +180,8 @@ export function GraphAiComposer({
               <p className="mt-3 text-caption leading-5 text-muted-foreground">
                 {!agents.length
                   ? t(($) => $.studio.no_agents)
-                  : runtime
-                    ? t(($) => $.studio.scope_hint)
-                    : t(($) => $.studio.agent_hint)}
+                  : t(($) => $.studio.agent_hint)}
               </p>
-              {runtime && (
-                <p className="mt-1 text-caption leading-5 text-muted-foreground">
-                  {t(($) => $.studio.cost_hint)}
-                </p>
-              )}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-5 py-4 sm:px-6">
               <p className="max-w-64 text-caption leading-5 text-muted-foreground">
@@ -248,9 +195,7 @@ export function GraphAiComposer({
                   locked ||
                   disabled ||
                   !prompt.trim() ||
-                  scopeIds.length === 0 ||
                   !defaultAgentId ||
-                  !scopeIds.includes(defaultAgentId) ||
                   !approverId
                 }
                 onClick={onGenerate}
@@ -266,26 +211,6 @@ export function GraphAiComposer({
               </Button>
             </div>
           </div>
-          {active && (
-            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border bg-muted/20 px-4 py-3">
-              <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
-              <p className="min-w-0 flex-1 text-caption leading-5 text-muted-foreground">
-                {job?.status === "queued"
-                  ? t(($) => $.studio.queued)
-                  : t(($) => $.studio.running)}
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={onCancel}
-              >
-                <Ban className="size-3.5" />
-                {t(($) => $.studio.cancel)}
-              </Button>
-            </div>
-          )}
           {failureText && (
             <div
               role="alert"
@@ -298,11 +223,6 @@ export function GraphAiComposer({
                 </p>
               )}
             </div>
-          )}
-          {job?.status === "cancelled" && (
-            <p className="mt-3 text-caption leading-5 text-muted-foreground">
-              {t(($) => $.studio.cancelled)}
-            </p>
           )}
           {!loading && mode === "unavailable" && !disabled && (
             <p className="mt-3 rounded-lg border border-warning/25 bg-warning/5 px-4 py-3 text-caption leading-5 text-muted-foreground">

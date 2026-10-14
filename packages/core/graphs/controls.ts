@@ -155,24 +155,24 @@ export function canDetachGraphRun(
   );
 }
 
-/** Non-terminal generation states. Any other status means the task is done. */
-export const GRAPH_GENERATION_ACTIVE_STATES = new Set(["queued", "running"]);
-
-export function graphGenerationActive(status: string | undefined): boolean {
-  return status !== undefined && GRAPH_GENERATION_ACTIVE_STATES.has(status);
-}
-
-export type GraphGenerationMode = "runtime" | "legacy" | "unavailable";
+export type GraphGenerationMode = "builder" | "legacy" | "unavailable";
 
 /**
- * Runtime authoring takes precedence whenever the server can serve it, because
- * it is the product path. The legacy server-model endpoint remains the fallback
- * for self-hosted servers that only configured MULTICA_LLM_*.
+ * The chat-based builder takes precedence whenever the server advertises it,
+ * because it is the product path. The legacy server-model endpoint remains the
+ * fallback for self-hosted servers that only configured MULTICA_LLM_*.
+ *
+ * This also keeps version mismatches off the deleted authoring endpoints. A new
+ * server with an old client sends `builder_enabled`, which the old client
+ * ignores; it lands on "legacy" (when the server still reports `enabled`) or
+ * "unavailable", never a 404 against a route that no longer exists. An old
+ * server with a new client never sends `builder_enabled` at all, so it lands on
+ * "legacy" whenever it exposes the legacy path.
  */
 export function graphGenerationMode(
   options: GraphGenerationOptions | undefined,
 ): GraphGenerationMode {
-  if (options?.runtimeEnabled === true) return "runtime";
+  if (options?.builderEnabled === true) return "builder";
   if (options?.enabled === true) return "legacy";
   return "unavailable";
 }

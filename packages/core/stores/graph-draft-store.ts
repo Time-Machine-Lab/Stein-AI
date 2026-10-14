@@ -7,6 +7,40 @@ import { definitionToWire } from "../graphs/definition";
 import { registerDraftCleanup } from "../drafts/cleanup-registry";
 import { getCurrentSlug } from "../platform/workspace-storage";
 
+/**
+ * The AI conversation that is drafting this document, if one is.
+ *
+ * It lives in the draft document rather than in the URL because
+ * `packages/views` may not import a router, and because it belongs to the same
+ * identity the draft already has: one `(user, workspace, graph | "new")` triple.
+ * A refresh therefore returns to the same conversation, mid-thought.
+ *
+ * `appliedMessageId` is the assistant reply already merged into `definition`.
+ * It is what makes reopening a conversation idempotent: without it, every mount
+ * would re-merge the last reply, and every re-render would look like a new
+ * change.
+ */
+export interface GraphDraftAi {
+  /** The chat session carrying the conversation. */
+  sessionId: string;
+  /** The hidden carrier agent backing that session; deleted with it. */
+  agentId: string;
+  /** The executor whose runtime and model the carrier clones. */
+  executorId: string;
+  /**
+   * The agents the draft may assign work to, in alias order: the first is
+   * `agent_default`. Persisted rather than re-derived, because aliases are
+   * positional — a directory that changes between turns changes what an alias
+   * means, and a reply written against the old one would merge into the wrong
+   * teammate.
+   */
+  scopeIds: string[];
+  /** The member a new approval node falls back to (`approver_default`). */
+  approverId: string;
+  /** Where the conversation runs, for the runtime indicator. */
+  runtimeId: string;
+  appliedMessageId: string | null;
+}
 export interface GraphDraft {
   definition: GraphDefinition;
   workspaceSlug?: string;
@@ -19,6 +53,7 @@ export interface GraphDraft {
   token: string | null;
   past: GraphDefinition[];
   future: GraphDefinition[];
+  ai: GraphDraftAi | null;
 }
 interface GraphDraftState {
   documents: Record<string, GraphDraft>;
@@ -34,6 +69,12 @@ interface GraphDraftState {
   keepLocal: (key: string, revision: number) => void;
   saved: (key: string, definition: GraphDefinition, revision: number) => void;
   discard: (key: string, definition: GraphDefinition, revision: number) => void;
+  /** Binds an AI conversation to the document, replacing any previous one. */
+  bindAi: (key: string, ai: GraphDraftAi) => void;
+  /** Records the assistant reply whose draft is now in `definition`. */
+  markAiApplied: (key: string, messageId: string) => void;
+  /** Unbinds the conversation without touching the definition. */
+  clearAi: (key: string) => void;
   clearWorkspace: (slug: string, adapter?: StorageAdapter) => void;
   clearAll: () => void;
 }
@@ -59,7 +100,43 @@ const fresh = (
   token: null,
   past: [],
   future: [],
+  ai: null,
 });
+
+/**
+ * Validates one stored AI binding, field by field, the way `read` validates the
+ * definition: a payload written by a newer build — or truncated mid-write — must
+ * yield no conversation at all rather than a half-bound one, because a
+ * conversation missing its directory would silently rewrite actor aliases.
+ */
+function readAi(value: unknown): GraphDraftAi | null {
+  if (!value || typeof value !== "object") return null;
+  const ai = value as Record<string, unknown>;
+  const text = (key: string): string | null =>
+    typeof ai[key] === "string" ? (ai[key] as string) : null;
+  const sessionId = text("sessionId"),
+    agentId = text("agentId"),
+    executorId = text("executorId"),
+    approverId = text("approverId"),
+    runtimeId = text("runtimeId");
+  if (!sessionId || !agentId || !executorId || !approverId || !runtimeId)
+    return null;
+  if (
+    !Array.isArray(ai.scopeIds) ||
+    ai.scopeIds.some((id) => typeof id !== "string") ||
+    (ai.appliedMessageId !== null && typeof ai.appliedMessageId !== "string")
+  )
+    return null;
+  return {
+    sessionId,
+    agentId,
+    executorId,
+    approverId,
+    runtimeId,
+    scopeIds: ai.scopeIds as string[],
+    appliedMessageId: (ai.appliedMessageId as string | null) ?? null,
+  };
+}
 const indexKey = "multica-graph-drafts:index:v1";
 function readIndex(storage: StorageAdapter): { key: string; slug: string }[] {
   try {
@@ -96,6 +173,7 @@ export function createGraphDraftStore(storage: StorageAdapter) {
     token: string;
     definition: GraphDefinition;
     baseRevision: number;
+    ai: GraphDraftAi | null;
   } | null {
     try {
       const raw = storage.getItem(key);
@@ -134,6 +212,7 @@ export function createGraphDraftStore(storage: StorageAdapter) {
         token: value.token,
         definition,
         baseRevision: value.baseRevision,
+        ai: readAi("ai" in value ? value.ai : null),
       };
     } catch {
       return null;
@@ -161,6 +240,9 @@ export function createGraphDraftStore(storage: StorageAdapter) {
           token,
           definition: document.definition,
           baseRevision: document.baseRevision,
+          // Omitted rather than written as null when there is no conversation,
+          // so a document from this build stays readable by the previous one.
+          ...(document.ai ? { ai: document.ai } : {}),
         }),
       );
       return {
@@ -176,6 +258,12 @@ export function createGraphDraftStore(storage: StorageAdapter) {
   return create<GraphDraftState>((set, get) => {
     const update = (key: string, document: GraphDraft) =>
       set((state) => ({ documents: { ...state.documents, [key]: document } }));
+    // Persists only what already has a stored copy to keep in step. A clean
+    // document has none (the two ways one can exist — `saved` and `discard` —
+    // both remove it), and writing one would make the next `open` report a
+    // recovered draft nobody edited.
+    const sync = (key: string, document: GraphDraft) =>
+      update(key, document.dirty ? persist(key, document) : document);
     const discard = (
       key: string,
       definition: GraphDefinition,
@@ -221,6 +309,10 @@ export function createGraphDraftStore(storage: StorageAdapter) {
                 dirty: true,
                 recovered: true,
                 conflict: recovered.baseRevision !== revision,
+                // The conversation survives a reload with the definition: the
+                // whole point of binding it to the document is that a refresh
+                // returns to the same conversation rather than a blank one.
+                ai: recovered.ai,
               }
             : fresh(definition, revision)),
           workspaceSlug,
@@ -273,6 +365,45 @@ export function createGraphDraftStore(storage: StorageAdapter) {
             future: current.future.slice(1),
           }),
         );
+      },
+      bindAi: (key, ai) => {
+        const current = get().documents[key];
+        // Written even while the definition is untouched: a refresh before the
+        // first reply must return to the same conversation rather than start a
+        // second one beside an orphaned carrier agent.
+        if (current) update(key, persist(key, { ...current, ai }));
+      },
+      markAiApplied: (key, messageId) => {
+        const current = get().documents[key];
+        // Guarded rather than assumed: a reply that changed nothing is still
+        // applied, and re-recording the same id would burn a storage write and
+        // a new token for nothing.
+        if (current?.ai && current.ai.appliedMessageId !== messageId)
+          sync(key, {
+            ...current,
+            ai: { ...current.ai, appliedMessageId: messageId },
+          });
+      },
+      clearAi: (key) => {
+        const current = get().documents[key];
+        if (!current?.ai) return;
+        // The definition is deliberately left alone: ending the conversation
+        // does not undo the work it produced. A document with no local changes
+        // has nothing worth keeping on disk, so it is dropped the way `discard`
+        // drops one — the alternative is reopening the graph to a "draft
+        // recovered" line for a draft that was never edited.
+        const next = { ...current, ai: null };
+        if (current.dirty) {
+          sync(key, next);
+          return;
+        }
+        let failed = false;
+        try {
+          storage.removeItem(key);
+        } catch {
+          failed = true;
+        }
+        update(key, { ...next, token: null, storageError: failed });
       },
       keepLocal: (key, revision) => {
         const current = get().documents[key];

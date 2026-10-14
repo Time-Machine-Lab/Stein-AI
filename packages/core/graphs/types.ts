@@ -89,47 +89,48 @@ export interface GraphGenerationResult {
   summary?: string;
 }
 
-/** Authoring handed to a runtime agent runs as a task, so it is asynchronous. */
-export type GraphGenerationStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
-
-export interface GraphGenerationFailure {
-  code: string;
-  message: string;
+export interface GraphGenerationOptions {
+  /** The legacy server-model path: one server-side model call per request. */
+  enabled: boolean;
+  /** The chat-based creation path. false on servers that predate it. */
+  builderEnabled: boolean;
 }
 
-export interface GraphGenerationView {
-  id: string;
-  status: GraphGenerationStatus;
-  /** The default executor the authoring task was queued for. */
-  agentId: string;
-  definition?: GraphDefinition;
-  summary?: string;
-  error?: GraphGenerationFailure;
-  submissions: number;
+/**
+ * A Graph-design conversation: a chat session on a hidden carrier agent.
+ *
+ * Nothing about the draft comes back here — the definition lives in the
+ * editor's own draft document, and every turn re-states it in the request
+ * envelope, so the server never holds a second copy to drift.
+ */
+export interface GraphBuilderSession {
+  sessionId: string;
+  /** The hidden carrier; archived or deleted with the session. */
+  builderAgentId: string;
+  /** Where the conversation runs — cloned from the chosen executor. */
+  runtimeId: string;
+  model: string;
+  /** The executor a new node falls back to (`agent_default`). */
+  defaultAgentId: string;
+  /** The approver a new approval node falls back to (`approver_default`). */
+  approverId: string;
+}
+
+/**
+ * One unfinished Graph-design conversation, for the case where the client's own
+ * draft document is gone. It carries no definition by design: the draft is the
+ * client's, and the server has never held a copy to hand back.
+ */
+export interface GraphBuilderSessionSummary {
+  sessionId: string;
+  title: string;
+  runtimeId: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface GraphGenerationCreateRequest {
-  prompt: string;
-  defaultAgentId: string;
-  /** Optional: an empty scope lets the agent use every agent it may invoke. */
-  agentScope?: string[];
-  approverId: string;
-  currentDefinition?: GraphDefinition;
-  messages?: GraphAuthoringMessage[];
-}
-
-export interface GraphGenerationOptions {
-  /** The legacy server-model path. */
-  enabled: boolean;
-  /** Absent on servers that predate the runtime authoring path. */
-  runtimeEnabled?: boolean;
+  /** Still in the wire format — the client decodes it, the server does not. */
+  lastMessageContent: string;
+  lastMessageRole: string;
+  lastMessageAt: string;
 }
 
 export interface GraphVersion {

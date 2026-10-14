@@ -23,13 +23,10 @@ import { GraphEditor } from "./graph-editor";
 const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   generate: vi.fn(),
-  create: vi.fn(),
-  createError: undefined as unknown,
-  cancel: vi.fn(),
-  job: null as unknown,
   enabled: true,
-  // Every existing case here exercises the legacy path; runtime cases opt in.
-  runtimeEnabled: false,
+  // Every existing case here exercises the legacy path; chat cases opt in.
+  builderEnabled: false,
+  runtimes: [] as unknown[],
   agents: [
     {
       id: "agent-1",
@@ -97,34 +94,52 @@ vi.mock("@multica/core/graphs", async (original) => ({
     isPending: false,
   }),
   useGenerateGraph: () => ({ mutateAsync: mocks.generate }),
-  useCreateGraphGeneration: () => ({
-    mutateAsync: mocks.create,
-    isPending: false,
-    // React Query surfaces the last rejected request here; the composer reads it
-    // so a refused request still reaches the user before any task exists.
-    error: mocks.createError,
-  }),
-  useCancelGraphGeneration: () => ({
-    mutateAsync: mocks.cancel,
-    isPending: false,
-  }),
   graphGenerationOptions: () => ({
     queryKey: ["generation-options"],
     queryFn: async () => ({
       enabled: mocks.enabled,
-      runtimeEnabled: mocks.runtimeEnabled,
+      builderEnabled: mocks.builderEnabled,
     }),
     initialData: {
       enabled: mocks.enabled,
-      runtimeEnabled: mocks.runtimeEnabled,
+      builderEnabled: mocks.builderEnabled,
     },
   }),
-  graphGenerationJob: (_wsId: string, id: string) => ({
-    queryKey: ["generation-job", id],
-    queryFn: async () => mocks.job,
-    enabled: Boolean(id),
-    initialData: id ? mocks.job : undefined,
+}));
+vi.mock("@multica/core/runtimes", () => ({
+  runtimeListOptions: () => ({
+    queryKey: ["runtimes"],
+    queryFn: async () => [],
+    initialData: mocks.runtimes,
   }),
+}));
+// The two AI modes are their own units, with their own tests; these cases are
+// about which one the editor mounts and what it hands them.
+vi.mock("./graph-ai-setup-panel", () => ({
+  GraphAiSetupPanel: ({ onManual }: { onManual: () => void }) => (
+    <div>
+      <p>Setup step</p>
+      <button type="button" onClick={onManual}>
+        Build manually
+      </button>
+    </div>
+  ),
+}));
+vi.mock("./graph-ai-workspace", () => ({
+  GraphAiWorkspace: ({
+    ai,
+    onMissing,
+  }: {
+    ai: { sessionId: string };
+    onMissing: () => void;
+  }) => (
+    <div aria-label="Design conversation">
+      <p>{ai.sessionId}</p>
+      <button type="button" onClick={onMissing}>
+        Conversation lost
+      </button>
+    </div>
+  ),
 }));
 // Canvas pointer/drag behavior is covered in browser acceptance; these tests isolate document state and proposal semantics.
 vi.mock("./graph-canvas", () => ({
@@ -218,30 +233,17 @@ function agent(id: string, name: string) {
     runtime_config: { effort: "high" },
   };
 }
-function jobView(overrides: Record<string, unknown>) {
-  return {
-    id: "gen-1",
-    status: "queued",
-    agentId: "agent-1",
-    submissions: 0,
-    createdAt: "",
-    updatedAt: "",
-    ...overrides,
-  };
-}
 const draftKey = graphDraftKey("ws-1", "user-1");
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
   useGraphDraftStore.setState({ documents: {} });
   mocks.enabled = true;
-  mocks.runtimeEnabled = false;
-  mocks.job = null;
-  mocks.createError = undefined;
+  mocks.builderEnabled = false;
+  mocks.runtimes = [];
   mocks.agents = [agent("agent-1", "Builder")];
   mocks.actor.role = "admin";
   mocks.save.mockResolvedValue({ id: "graph-1", revision: 1 });
-  mocks.create.mockResolvedValue(jobView({}));
 });
 
 describe("AI graph proposals", () => {
@@ -368,149 +370,48 @@ describe("AI graph proposals", () => {
   });
 });
 
-describe("Runtime agent authoring", () => {
+describe("Chat authoring", () => {
   beforeEach(() => {
-    mocks.runtimeEnabled = true;
+    mocks.builderEnabled = true;
   });
-  it("queues the authoring task on the scoped agent without touching the draft", async () => {
+  it("hands AI mode to the setup step until a conversation exists", () => {
     editor();
-    generate();
-    await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
-    expect(mocks.create.mock.calls[0]![0]).toEqual({
-      prompt: "Research and review our release",
-      defaultAgentId: "agent-1",
-      agentScope: ["agent-1"],
-      approverId: "member-1",
-    });
-    // Nothing is written until the task answers and the proposal is applied.
+    expect(screen.getByText("Setup step")).toBeVisible();
+    // The one-shot form and its request state belong to the other path.
     expect(
-      useGraphDraftStore.getState().documents[draftKey]?.definition.name,
-    ).toBe("");
-    expect(mocks.generate).not.toHaveBeenCalled();
-  });
-  it("prefers the runtime path over a configured server model", () => {
-    editor();
+      screen.queryByRole("button", { name: "Generate workflow" }),
+    ).toBeNull();
     expect(
-      screen.getByRole("combobox", { name: "Participating agents" }),
-    ).toHaveTextContent("Builder");
+      screen.queryByRole("combobox", { name: "Workflow agent" }),
+    ).toBeNull();
   });
-  it("holds the request while the task runs and cancels it by id", async () => {
-    mocks.create.mockResolvedValue(jobView({ status: "running" }));
-    mocks.job = jobView({ status: "running" });
+  it("opens the bound conversation and falls back to the setup step without it", () => {
     editor();
-    generate();
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(mocks.cancel).toHaveBeenCalledWith("gen-1"));
-    expect(screen.getByLabelText("What should this workflow do?")).toBeDisabled();
-  });
-  it("applies a finished draft as a proposal that still needs approval", async () => {
-    mocks.create.mockResolvedValue(jobView({ status: "succeeded" }));
-    mocks.job = jobView({
-      status: "succeeded",
-      definition: generatedDefinition(),
-      summary: "Added review",
-    });
-    editor();
-    generate();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Apply changes" }),
+    act(() =>
+      useGraphDraftStore.getState().bindAi(draftKey, {
+        sessionId: "session-1",
+        agentId: "carrier-1",
+        executorId: "agent-1",
+        scopeIds: ["agent-1"],
+        approverId: "member-1",
+        runtimeId: "runtime-1",
+        appliedMessageId: null,
+      }),
     );
-    expect(
-      useGraphDraftStore.getState().documents[draftKey]?.definition.name,
-    ).toBe("Research and review");
-    expect(mocks.save).not.toHaveBeenCalled();
-    expect(mocks.replace).not.toHaveBeenCalled();
-  });
-  it("refuses a draft this build cannot open instead of replacing the editor", async () => {
-    mocks.create.mockResolvedValue(jobView({ status: "succeeded" }));
-    mocks.job = jobView({
-      status: "succeeded",
-      definition: { ...generatedDefinition(), schemaVersion: 3 },
-    });
-    editor();
-    generate();
-    expect(await screen.findByRole("alert")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Apply changes" })).toBeNull();
-  });
-  it("surfaces a failed task and keeps the request for a retry", async () => {
-    mocks.create.mockResolvedValue(jobView({ status: "failed" }));
-    mocks.job = jobView({
-      status: "failed",
-      error: { code: "generation_timeout", message: "Timed out" },
-    });
-    editor();
-    generate();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Generation took too long",
+    expect(screen.getByLabelText("Design conversation")).toHaveTextContent(
+      "session-1",
     );
-    expect(screen.getByLabelText("What should this workflow do?")).toHaveValue(
-      "Research and review our release",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Conversation lost" }));
+    expect(screen.getByText("Setup step")).toBeVisible();
+    expect(useGraphDraftStore.getState().documents[draftKey]?.ai).toBeNull();
+  });
+  it("keeps the one-shot form on a server that has no builder", () => {
+    mocks.builderEnabled = false;
+    editor();
     expect(
       screen.getByRole("button", { name: "Generate workflow" }),
-    ).toBeEnabled();
-  });
-  it("reports a refused request the same way and keeps the description", async () => {
-    mocks.createError = new ApiError("Too many", 429, "Too Many Requests", {
-      code: "generation_busy",
-    });
-    mocks.create.mockRejectedValue(mocks.createError);
-    editor();
-    generate();
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Another draft is being generated");
-    expect(alert).toHaveTextContent("Your description is kept");
-    expect(screen.getByLabelText("What should this workflow do?")).toHaveValue(
-      "Research and review our release",
-    );
-    expect(mocks.cancel).not.toHaveBeenCalled();
-  });
-  it("explains a runtime that cannot author workflows", async () => {
-    mocks.createError = new ApiError("Conflict", 409, "Conflict", {
-      code: "capability_missing",
-    });
-    mocks.create.mockRejectedValue(mocks.createError);
-    editor();
-    generate();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "cannot draft workflows yet",
-    );
-  });
-  it("blocks applying a proposal that landed after manual edits", async () => {
-    mocks.create.mockResolvedValue(jobView({ status: "succeeded" }));
-    mocks.job = jobView({
-      status: "succeeded",
-      definition: generatedDefinition(),
-      summary: "Added review",
-    });
-    editor();
-    generate();
-    await screen.findByRole("button", { name: "Apply changes" });
-    fireEvent.click(screen.getByRole("button", { name: "Build manually" }));
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Newer edits" },
-    });
-    expect(
-      screen.getByRole("button", { name: "Apply changes" }),
-    ).toBeDisabled();
-    expect(screen.getByLabelText("Name")).toHaveValue("Newer edits");
-  });
-  it("waits for a scope before offering to generate", () => {
-    mocks.agents = [agent("agent-1", "Builder"), agent("agent-2", "Reviewer")];
-    editor();
-    fireEvent.change(screen.getByLabelText("What should this workflow do?"), {
-      target: { value: "Research our release" },
-    });
-    expect(
-      screen.getByRole("button", { name: "Generate workflow" }),
-    ).toBeDisabled();
-    fireEvent.click(
-      screen.getByRole("combobox", { name: "Participating agents" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Builder" }));
-    expect(
-      screen.getByRole("button", { name: "Generate workflow" }),
-    ).toBeEnabled();
+    ).toBeVisible();
+    expect(screen.queryByText("Setup step")).toBeNull();
   });
 });
 

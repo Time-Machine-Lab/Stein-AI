@@ -1,82 +1,54 @@
 import { describe, expect, it } from "vitest";
-import { graphGenerationActive, graphGenerationMode } from "./controls";
-import { graphGenerationJob, graphGenerationOptions, graphKeys } from "./queries";
+import { graphGenerationMode } from "./controls";
+import { graphGenerationOptions, graphKeys } from "./queries";
+import type { GraphGenerationOptions } from "./types";
 
 /**
- * Calls the interval function the way React Query does, with the data it has
- * already put in the cache.
+ * A server older than the chat-based builder never sends `builder_enabled`, so
+ * the mode must resolve off `enabled` alone. The client type requires the field
+ * because the parser always fills it, hence the assertion here.
  */
-function pollInterval(options: { refetchInterval?: unknown }, status?: string) {
-  const interval = options.refetchInterval;
-  if (typeof interval !== "function") return interval;
-  return (interval as (query: unknown) => unknown)({
-    state: { data: status === undefined ? undefined : { status } },
-  });
+function withoutBuilder(sent: Pick<GraphGenerationOptions, "enabled">) {
+  return sent as GraphGenerationOptions;
 }
-
-describe("graphGenerationJob", () => {
-  it("keys the job under the workspace prefix so the graph realtime handler refreshes it", () => {
-    const key = graphGenerationJob("ws-1", "gen-1").queryKey;
-    expect(key.slice(0, graphKeys.all("ws-1").length)).toEqual(
-      graphKeys.all("ws-1"),
-    );
-    expect(key).not.toEqual(graphGenerationOptions("ws-1").queryKey);
-    expect(graphGenerationJob("ws-1", "gen-1").queryKey).not.toEqual(
-      graphGenerationJob("ws-1", "gen-2").queryKey,
-    );
-  });
-
-  it.each([
-    ["queued", 5_000],
-    ["running", 5_000],
-    ["succeeded", false],
-    ["failed", false],
-    ["cancelled", false],
-    [undefined, false],
-  ])("polls every %s only while the task is in flight", (status, expected) => {
-    expect(
-      pollInterval(graphGenerationJob("ws-1", "gen-1"), status as string),
-    ).toBe(expected);
-  });
-
-  it("stays idle without a workspace or a generation", () => {
-    expect(graphGenerationJob("", "gen-1").enabled).toBe(false);
-    expect(graphGenerationJob("ws-1", "").enabled).toBe(false);
-    expect(graphGenerationJob("ws-1", "gen-1").enabled).toBe(true);
-  });
-});
-
-describe("graphGenerationActive", () => {
-  it.each([
-    ["queued", true],
-    ["running", true],
-    ["succeeded", false],
-    ["failed", false],
-    ["cancelled", false],
-    [undefined, false],
-    // A status this build does not recognize must end the poll, not extend it.
-    ["paused", false],
-  ])("treats %s as active=%s", (status, expected) => {
-    expect(graphGenerationActive(status)).toBe(expected);
-  });
-});
 
 describe("graphGenerationMode", () => {
   it.each([
-    [{ enabled: true, runtimeEnabled: true }, "runtime"],
-    [{ enabled: false, runtimeEnabled: true }, "runtime"],
-    [{ enabled: true, runtimeEnabled: false }, "legacy"],
-    [{ enabled: true }, "legacy"],
-    [{ enabled: false, runtimeEnabled: false }, "unavailable"],
-    [{ enabled: false }, "unavailable"],
+    [{ enabled: true, builderEnabled: true }, "builder"],
+    [{ enabled: false, builderEnabled: true }, "builder"],
+    [{ enabled: true, builderEnabled: false }, "legacy"],
+    [{ enabled: false, builderEnabled: false }, "unavailable"],
     [undefined, "unavailable"],
   ])("resolves %j to %s", (options, expected) => {
     expect(graphGenerationMode(options)).toBe(expected);
   });
 
-  it("does not fall back to the server model on an unknown runtime flag", () => {
-    // A server that predates the runtime path sends no `runtime_enabled` at
-    // all; the legacy path is the only one that can serve that request.
-    expect(graphGenerationMode({ enabled: true })).toBe("legacy");
+  it("lands an old server that predates the builder on the legacy path", () => {
+    expect(graphGenerationMode(withoutBuilder({ enabled: true }))).toBe(
+      "legacy",
+    );
+  });
+
+  it("stays unavailable when a server advertises neither path", () => {
+    // Both signals absent means neither entry point may be offered; calling the
+    // legacy endpoint is the only alternative and it is not configured.
+    expect(graphGenerationMode(withoutBuilder({ enabled: false }))).toBe(
+      "unavailable",
+    );
+    expect(graphGenerationMode(undefined)).toBe("unavailable");
+  });
+});
+
+describe("graphGenerationOptions", () => {
+  it("keys the options under the workspace prefix and stays idle without one", () => {
+    const key = graphGenerationOptions("ws-1").queryKey;
+    expect(key.slice(0, graphKeys.all("ws-1").length)).toEqual(
+      graphKeys.all("ws-1"),
+    );
+    expect(graphGenerationOptions("a").queryKey).not.toEqual(
+      graphGenerationOptions("b").queryKey,
+    );
+    expect(graphGenerationOptions("").enabled).toBe(false);
+    expect(graphGenerationOptions("ws-1").enabled).toBe(true);
   });
 });

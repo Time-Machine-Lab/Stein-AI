@@ -6,7 +6,6 @@ import type {
   GraphApprovalRequest,
   GraphCommand,
   GraphDefinition,
-  GraphGenerationCreateRequest,
   GraphGenerationRequest,
   GraphRunAction,
   GraphStartRequest,
@@ -55,33 +54,6 @@ export function useGenerateGraph(wsId: string) {
     mutationKey: [...graphKeys.all(wsId), "generate"],
     mutationFn: (request: GraphGenerationRequest) => api.generateGraph(request),
     retry: false,
-  });
-}
-
-export function useCreateGraphGeneration(wsId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationKey: [...graphKeys.all(wsId), "create-generation"],
-    mutationFn: (request: GraphGenerationCreateRequest) =>
-      api.createGraphGeneration(request),
-    retry: false,
-    // The 202 body carries the queued view, so seed the job cache instead of
-    // waiting for the first poll to render an in-flight state.
-    onSuccess: (view) =>
-      qc.setQueryData(graphKeys.generationJob(wsId, view.id), view),
-    onSettled: () => qc.invalidateQueries({ queryKey: graphKeys.all(wsId) }),
-  });
-}
-
-export function useCancelGraphGeneration(wsId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationKey: [...graphKeys.all(wsId), "cancel-generation"],
-    mutationFn: (id: string) => api.cancelGraphGeneration(id),
-    retry: false,
-    onSuccess: (view) =>
-      qc.setQueryData(graphKeys.generationJob(wsId, view.id), view),
-    onSettled: () => qc.invalidateQueries({ queryKey: graphKeys.all(wsId) }),
   });
 }
 
