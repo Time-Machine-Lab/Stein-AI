@@ -24,6 +24,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// Graph migrations applied to the private test schema. 332 installs the Graph
+// schema and later numbers extend it. 358 is skipped because it installs the
+// plugin-manifest trigger, whose function body declares plugin_* row types the
+// hand-built legacy schema never creates. Bump graphMigrationLast when a Graph
+// migration is added; TestGraphIntegrationCoversGraphMigrations fails if one is
+// missed.
+const (
+	graphMigrationFirst = 332
+	graphMigrationLast  = 374
+	graphMigrationSkip  = 358
+)
+
 // The Graph integration suite requires an explicitly selected test server and
 // creates a private schema. It never migrates an ambient application database.
 // Legacy table columns are generated from sqlc models; the Graph migrations and
@@ -93,7 +105,7 @@ CREATE UNIQUE INDEX test_task_pending ON agent_task_queue(issue_id,agent_id) WHE
 	sort.Strings(files)
 	for _, file := range files {
 		number, _ := strconv.Atoi(strings.SplitN(filepath.Base(file), "_", 2)[0])
-		if number < 332 || number > 371 || number == 358 {
+		if number < graphMigrationFirst || number > graphMigrationLast || number == graphMigrationSkip {
 			continue
 		}
 		data, e := os.ReadFile(file)
@@ -106,6 +118,33 @@ CREATE UNIQUE INDEX test_task_pending ON agent_task_queue(issue_id,agent_id) WHE
 	}
 	return pool
 }
+
+// TestGraphIntegrationCoversGraphMigrations fails when a Graph migration lands
+// outside the window graphIntegrationPool applies, so the private test schema
+// cannot silently drift behind the Graph schema.
+func TestGraphIntegrationCoversGraphMigrations(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*_graph*.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no Graph migrations found")
+	}
+	for _, file := range files {
+		base := filepath.Base(file)
+		number, err := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
+		if err != nil {
+			t.Fatalf("migration %s: %v", base, err)
+		}
+		if number < graphMigrationFirst {
+			continue
+		}
+		if number > graphMigrationLast && number != graphMigrationSkip {
+			t.Fatalf("Graph migration %s is outside the applied window [%d, %d]; bump graphMigrationLast or add it to the skip list", base, graphMigrationFirst, graphMigrationLast)
+		}
+	}
+}
+
 func graphTestTable(name string, model any) string {
 	typ := reflect.TypeOf(model)
 	columns := []string{}
