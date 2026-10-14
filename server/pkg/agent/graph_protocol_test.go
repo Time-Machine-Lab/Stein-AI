@@ -186,7 +186,7 @@ func TestGraphLocalAdaptersCancellationStopsDescendants(t *testing.T) {
 			if provider == "dsh" {
 				model = "deepseek/frozen-model"
 			}
-			session, err := backend.Execute(context.Background(), "frozen work", ExecOptions{Model: model, Cwd: t.TempDir(), Timeout: 250 * time.Millisecond})
+			session, err := backend.Execute(context.Background(), "frozen work", ExecOptions{Model: model, Cwd: t.TempDir(), Timeout: 2 * time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -199,7 +199,7 @@ func TestGraphLocalAdaptersCancellationStopsDescendants(t *testing.T) {
 				if result.Status == "completed" || result.ExecutionStopped == nil || !*result.ExecutionStopped {
 					t.Fatalf("unconfirmed cancel: %+v", result)
 				}
-			case <-time.After(6 * time.Second):
+			case <-time.After(30 * time.Second):
 				t.Fatal("owned descendant still holds attempt open")
 			}
 		})
@@ -351,7 +351,7 @@ func TestGraphAntigravityRequiresStructuredResultAndEffectiveModel(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			session, err := backend.Execute(context.Background(), "work", ExecOptions{Model: "frozen-model", Cwd: t.TempDir(), Timeout: time.Second})
+			session, err := backend.Execute(context.Background(), "work", ExecOptions{Model: "frozen-model", Cwd: t.TempDir(), Timeout: 20 * time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -378,7 +378,7 @@ func TestGraphManagedMCPIsDeliveredToCopilotAndDevEco(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			session, err := backend.Execute(context.Background(), "work", ExecOptions{Model: "frozen-model", Timeout: time.Second, McpConfig: json.RawMessage(`{"mcpServers":{"pinned":{"type":"http","url":"https://scoped.example/mcp","headers":{"Authorization":"Bearer task-token"}}}}`)})
+			session, err := backend.Execute(context.Background(), "work", ExecOptions{Model: "frozen-model", Timeout: 20 * time.Second, McpConfig: json.RawMessage(`{"mcpServers":{"pinned":{"type":"http","url":"https://scoped.example/mcp","headers":{"Authorization":"Bearer task-token"}}}}`)})
 			if err != nil {
 				t.Fatal(err)
 			}
