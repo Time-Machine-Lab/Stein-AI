@@ -92,7 +92,8 @@ Files: `packages/core/graphs/*`（查询与变更、zod schema）、`packages/vi
 - [ ] 如需先用起来：在线上后端环境设置 `MULTICA_LLM_API_KEY`、`MULTICA_LLM_BASE_URL`、`MULTICA_LLM_DEFAULT_MODEL` 后重启后端。单智能体的限制仍在。
 - [ ] 线上第一次用 V2 前，跑一个“智能体节点加审批节点”的小流程，并在执行中取消一次，确认能很快进入 `cancelled`。
 - [ ] 让需要 daemon 取消修复与 V2 执行的用户安装 v0.1.4 及以上的 CLI（下载页与安装脚本已指向本仓库的 Release）。
-- [ ] 吊销验收中用过的凭据：GitHub PAT（权限过宽）、xingwan.store 令牌、tmlab bearer 令牌。
+- [ ] **配额恢复后补做 Codex 那一半验收**：本机唯一 Codex 账号的用量限制到 2026-10-20 12:58 才恢复。恢复后重跑一次 Codex 执行者的生成，把结果补进 [V2 使用与发布说明](../graph-v2-delivery.md) 的运行时智能体编排真机验收小节。验收全部通过后，才轮到删除旧路径。
+- [ ] 吊销验收中用过的凭据：GitHub PAT（权限过宽）、xingwan.store 令牌、tmlab bearer 令牌、**Codex 代理密码**（`~/.codex/.env` 里的 `HTTPS_PROXY` 内嵌 `proxyuser:<密码>`，验收期间曾被打印到终端一次，必须轮换）。
 
 ### 已知缺口（由使用者决定先不做，上线时已明确）
 
@@ -100,6 +101,12 @@ Files: `packages/core/graphs/*`（查询与变更、zod schema）、`packages/vi
 - Claude 适配使用 `--bare`，与部分 API 网关不兼容。
 - Codex 在 Graph 的私有配置里丢掉了 bearer 令牌，验收时靠自定义 `CODEX_HOME` 绕过。
 - Graph 运行状态的持久化方式（运行文档加子表）的进一步改造，验收时标记为后续项，尚无具体方案。
+- **`apps/mobile` 仍走旧的同步服务端 LLM 路径**（2026-10-14 决定先不改）。已勘察清楚，结论如下，不必重新探查：
+  - 唯一的实际缺陷是两处读 `generation.data?.enabled`——[editor-screen.tsx:291](../../apps/mobile/components/graphs/editor-screen.tsx) 的按钮闸门与 [:335](../../apps/mobile/components/graphs/editor-screen.tsx) 的文案。在没有 `MULTICA_LLM_*` 的服务器上接口返回 `{enabled:false, runtime_enabled:true}`，于是手机显示"AI generation is unavailable on this server"，**这句话是假的**：生成可用，只是不在手机上。
+  - `runtimeEnabled` 已经由现有的 `GraphGenerationOptionsSchema` 解析到同一个对象上（`apps/mobile/data/api.ts` 用的就是 core 的 schema），所以**改文案不需要动数据层**。移动端没有 i18n，文案是硬编码英文。
+  - 要真正切到运行时路径，需要：`data/api.ts` 加 `createGraphGeneration`/`getGraphGeneration`/`cancelGraphGeneration`、`data/queries/graphs.ts` 加 `generationJob`、`data/mutations/graphs.ts` 加两个 hook、`editor-screen.tsx` 消费终态。可复用的现成件：`graphRunOptions` 已示范"终态即停轮询"；`use-graphs-realtime.ts` 已按 `graph:*` 前缀失效整个命名空间，所以放在 `graphKeys.all(wsId)` 下的 job key 自动被覆盖。
+  - 真正的缺口是**手机没有任何多选组件**（`shared.tsx` 的 `GraphPick` 只支持单值），`agent_scope` 没有 UI。因此要么做成"单选范围"（草稿只能用一个智能体，与手机现状一致），要么让模型在全部可调用智能体里分配（用户失去范围控制，与 web 语义有差异），要么新造一个多选交互。
+  - 本机没有 iOS 模拟器，任何移动端改动都只能做类型检查与 lint，无法实机验证。
 
 ### 尚未验证的 V2 能力
 
@@ -107,6 +114,7 @@ HTTP 节点、子流程、投票审批（quorum）、触发器、重试、重启
 
 ### 环境与清理（等确认后再做）
 
+- **2026-10-14 验收新建的本机环境仍在运行**，供配额恢复后补做 Codex 那一次：数据库 `multica`（已迁移到 374）、服务端监听 8090、CLI profile `acceptance` 的 daemon（`--workspace-id d69d25e2-2983-48eb-b488-d508514c2621`）。该 daemon 启动时导入了 `~/.codex/.env` 里的代理（Codex 需要，注意这个代理密码要轮换）。验收用的临时文件在 `D:\gotmp\multica-acceptance\`，JWT 与工作区/智能体 ID 都记在那里。
 - 本地服务与 daemon、Web 预览、数据库 `multica_graph`、`multica_graph_test`、`multica_main`、`multica_main_test`。
 - `D:\project\graph-data` 下的凭据与工作目录。
 - 工作树 `Stein-AI-graph`、`Stein-AI-hotfix`、`Stein-AI-dist`、`Stein-AI-v2`、`Stein-AI-docs`。
