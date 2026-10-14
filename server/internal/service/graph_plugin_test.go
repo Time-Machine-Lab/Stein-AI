@@ -1,11 +1,13 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 	"github.com/multica-ai/multica/server/pkg/pluginruntime"
+	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
 func graphPluginSkillFixture(t *testing.T) (pluginruntime.CompiledEntry, map[string]db.PluginArtifactFile) {
@@ -26,6 +28,35 @@ func graphPluginSkillFixture(t *testing.T) (pluginruntime.CompiledEntry, map[str
 	_, refs := BuildAgentSkillBundles([]AgentSkillData{skill})
 	entry.SkillBundleHash, entry.SkillSizeBytes, entry.SkillFileCount = refs[0].Hash, refs[0].SizeBytes, refs[0].FileCount
 	return entry, files
+}
+
+func TestGraphPluginRemoteMCPIsPinnedWithoutCredentialMaterial(t *testing.T) {
+	entry, _ := graphPluginSkillFixture(t)
+	entry.ContributionType = plugincontract.ContributionRemoteMCPV1
+	entry.ConfigID = "10000000-0000-0000-0000-000000000006"
+	entry.ConfigRevision = 2
+	entry.Endpoint = "https://tools.example.com/mcp"
+	entry.Transport = "streamable-http"
+	entry.AuthType = "bearer"
+	entry.SecretRef = "10000000-0000-0000-0000-000000000007"
+	entry.FailurePolicy = "required"
+	entry.ApprovedTools = []pluginruntime.RemoteMCPTool{{Name: "read", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	entry.ToolSchemaDigest, _ = remotemcp.ToolSetDigest(entry.ApprovedTools)
+	skills, pins, err := graphMaterializePluginSkills([]pluginruntime.CompiledEntry{entry}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 0 || len(pins) != 1 {
+		t.Fatalf("unexpected snapshot: %v %v", skills, pins)
+	}
+	entries := GraphPluginEntries(pins)
+	if len(entries) != 1 || entries[0].Endpoint != entry.Endpoint || entries[0].SecretRef != entry.SecretRef {
+		t.Fatalf("lost pinned connection: %#v", entries)
+	}
+	entry.ToolSchemaDigest = "sha256:wrong"
+	if _, _, err = graphMaterializePluginSkills([]pluginruntime.CompiledEntry{entry}, nil); err == nil {
+		t.Fatal("accepted tool schema drift")
+	}
 }
 
 func TestGraphPluginSkillsUsePinnedMaterialization(t *testing.T) {

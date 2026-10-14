@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 	"github.com/multica-ai/multica/server/pkg/pluginruntime"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
@@ -55,6 +56,14 @@ func (set *remoteMCPBrokerSet) Close() {
 }
 
 func startTaskRemoteMCPBrokers(setupCtx, lifetimeCtx context.Context, taskID, provider string, connections []pluginruntime.RemoteMCPConnection, resolveCredential remoteMCPCredentialResolver, logger *slog.Logger) (json.RawMessage, []string, *remoteMCPBrokerSet, error) {
+	return startRemoteMCPBrokers(setupCtx, lifetimeCtx, taskID, provider, connections, resolveCredential, logger, providerSupportsRemoteMCPBroker, false)
+}
+
+func startGraphRemoteMCPBrokers(setupCtx, lifetimeCtx context.Context, taskID, provider string, connections []pluginruntime.RemoteMCPConnection, resolveCredential remoteMCPCredentialResolver, logger *slog.Logger) (json.RawMessage, []string, *remoteMCPBrokerSet, error) {
+	return startRemoteMCPBrokers(setupCtx, lifetimeCtx, taskID, provider, connections, resolveCredential, logger, agent.GraphRemoteMCPSupported, true)
+}
+
+func startRemoteMCPBrokers(setupCtx, lifetimeCtx context.Context, taskID, provider string, connections []pluginruntime.RemoteMCPConnection, resolveCredential remoteMCPCredentialResolver, logger *slog.Logger, supported func(string) bool, revalidateGraph bool) (json.RawMessage, []string, *remoteMCPBrokerSet, error) {
 	if len(connections) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -62,7 +71,7 @@ func startTaskRemoteMCPBrokers(setupCtx, lifetimeCtx context.Context, taskID, pr
 	servers := map[string]any{}
 	diagnostics := make([]string, 0)
 	for _, connection := range connections {
-		if !providerSupportsRemoteMCPBroker(provider) {
+		if !supported(provider) {
 			message := fmt.Sprintf("Remote MCP %s is incompatible with provider %s", connection.ContributionKey, provider)
 			if connection.FailurePolicy == "optional" {
 				diagnostics = append(diagnostics, message)
@@ -72,7 +81,7 @@ func startTaskRemoteMCPBrokers(setupCtx, lifetimeCtx context.Context, taskID, pr
 			return nil, diagnostics, nil, errors.New(message)
 		}
 		headers := make(http.Header)
-		if connection.CredentialHeader != "" && resolveCredential != nil {
+		if (connection.CredentialHeader != "" || revalidateGraph) && resolveCredential != nil {
 			resolvedHeaders, resolveErr := resolveCredential(setupCtx, connection.ContributionID)
 			if resolveErr != nil {
 				message := fmt.Sprintf("Remote MCP %s credential is unavailable", connection.ContributionKey)
@@ -84,7 +93,7 @@ func startTaskRemoteMCPBrokers(setupCtx, lifetimeCtx context.Context, taskID, pr
 				return nil, diagnostics, nil, fmt.Errorf("%s: %w", message, resolveErr)
 			}
 			headers = resolvedHeaders
-		} else if connection.CredentialHeader != "" {
+		} else if connection.CredentialHeader != "" || revalidateGraph {
 			message := fmt.Sprintf("Remote MCP %s credential resolver is unavailable", connection.ContributionKey)
 			if connection.FailurePolicy == "optional" {
 				diagnostics = append(diagnostics, message)
@@ -125,7 +134,7 @@ func startTaskRemoteMCPBrokers(setupCtx, lifetimeCtx context.Context, taskID, pr
 		proxy := &remoteMCPProxy{
 			taskID: taskID, connection: connection, endpoint: endpoint,
 			client: remotemcp.NewSecureHTTPClient(endpoint), credentialHeaders: headers,
-			resolveCredential: resolveCredential, path: "/" + pathToken,
+			resolveCredential: resolveCredential, revalidateGraphAuthorization: revalidateGraph, path: "/" + pathToken,
 			semaphore: make(chan struct{}, remoteMCPMaxConcurrency), logger: logger,
 		}
 		server := &http.Server{Handler: proxy, ReadHeaderTimeout: 5 * time.Second}
@@ -207,16 +216,17 @@ func remoteMCPServerName(connection pluginruntime.RemoteMCPConnection) string {
 }
 
 type remoteMCPProxy struct {
-	taskID            string
-	connection        pluginruntime.RemoteMCPConnection
-	endpoint          *url.URL
-	client            *http.Client
-	credentialHeaders http.Header
-	resolveCredential remoteMCPCredentialResolver
-	path              string
-	semaphore         chan struct{}
-	calls             atomic.Int64
-	logger            *slog.Logger
+	taskID                       string
+	connection                   pluginruntime.RemoteMCPConnection
+	endpoint                     *url.URL
+	client                       *http.Client
+	credentialHeaders            http.Header
+	resolveCredential            remoteMCPCredentialResolver
+	revalidateGraphAuthorization bool
+	path                         string
+	semaphore                    chan struct{}
+	calls                        atomic.Int64
+	logger                       *slog.Logger
 }
 
 type remoteMCPRequest struct {
@@ -294,7 +304,7 @@ func (proxy *remoteMCPProxy) ServeHTTP(w http.ResponseWriter, request *http.Requ
 		}
 	}
 	credentialHeaders := proxy.credentialHeaders
-	if proxy.connection.CredentialHeader != "" && proxy.resolveCredential != nil {
+	if (proxy.connection.CredentialHeader != "" || proxy.revalidateGraphAuthorization) && proxy.resolveCredential != nil {
 		credentialHeaders, err = proxy.resolveCredential(request.Context(), proxy.connection.ContributionID)
 		if err != nil {
 			resultClass = "credential_revoked"

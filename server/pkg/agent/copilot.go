@@ -348,6 +348,19 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 	runCtx, cancel := runContext(ctx, timeout)
 
 	args := buildCopilotArgs(prompt, opts, b.cfg.Logger)
+	mcpPath := ""
+	if b.cfg.ReplaceEnvironment {
+		args = append(args, "--disable-builtin-mcps")
+		if hasManagedMcpConfig(opts.McpConfig) {
+			var err error
+			mcpPath, err = writeMcpConfigToTemp(opts.McpConfig)
+			if err != nil {
+				cancel()
+				return nil, err
+			}
+			args = append(args, "--additional-mcp-config", "@"+mcpPath)
+		}
+	}
 	cmd, argv0, cmdArgs := b.cfg.commandAt(execName).execVia(runCtx, chooseCopilotInvocation, lookedUp, args, b.cfg.Logger)
 	hideAgentWindow(cmd)
 	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
@@ -355,18 +368,20 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
+		cleanupMcpConfigTemp(mcpPath)
 		return nil, fmt.Errorf("copilot stdout pipe: %w", err)
 	}
 	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[copilot:stderr] "), agentStderrTailBytes)
 	cmd.Stderr = stderrBuf
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
+		cleanupMcpConfigTemp(mcpPath)
 		return nil, fmt.Errorf("start copilot: %w", err)
 	}
 
@@ -376,6 +391,7 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 	resCh := make(chan Result, 1)
 
 	go func() {
+		defer cleanupMcpConfigTemp(mcpPath)
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)

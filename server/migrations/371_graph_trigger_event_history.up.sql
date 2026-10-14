@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY graph_trigger_event_history_idx ON graph_trigger_event(trigger_id,created_at DESC);

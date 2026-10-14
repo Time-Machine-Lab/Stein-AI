@@ -303,6 +303,13 @@ jobs:
       - name: Setup Helm
         uses: azure/setup-helm@v4
 
+      # Graph's native OpenClaw/OMP credential projection uses node:sqlite.
+      # Pin a supported runtime so these fixtures execute in the backend gate.
+      - name: Setup Node.js for native runtime fixtures
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - name: Test Helm chart
         run: bash scripts/helm-config.test.sh
 

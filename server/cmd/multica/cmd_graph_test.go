@@ -144,6 +144,57 @@ func TestGraphControlRequiresExplicitReplayKey(t *testing.T) {
 	}
 }
 
+func TestGraphV2ApproverReplacementTargetsExactMemberAndGate(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/graph-runs/run-1/approver" {
+			t.Errorf("wrong path %s", r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"id":"run-1"}`))
+	}))
+	defer server.Close()
+	t.Setenv("MULTICA_SERVER_URL", server.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "human-token")
+	for _, key := range []string{"MULTICA_TASK_ID", "MULTICA_AGENT_ID", "MULTICA_DAEMON_PORT", "MULTICA_TASK_CONFIG_ROOT"} {
+		t.Setenv(key, "")
+	}
+	cmd := newGraphCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"approver", "run-1", "--expected-revision", "8", "--idempotency-key", "replace-8", "--node-run-id", "gate-1", "--member-id", "new-member", "--previous-member-id", "old-member", "--reason", "Reviewer changed"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if body["node_run_id"] != "gate-1" || body["previous_approver_id"] != "old-member" || body["approver_id"] != "new-member" {
+		t.Fatalf("body=%v", body)
+	}
+}
+
+func TestGraphListSearchEncodesPaginationAndFilters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/graph-runs/search" || r.URL.Query().Get("q") != "A & B" || r.URL.Query().Get("cursor") != "opaque" || r.URL.Query().Get("state") != "blocked" || r.URL.Query().Get("limit") != "10" {
+			t.Errorf("wrong search %s", r.URL)
+		}
+		_, _ = w.Write([]byte(`{"items":[],"total":0}`))
+	}))
+	defer server.Close()
+	t.Setenv("MULTICA_SERVER_URL", server.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "human-token")
+	for _, key := range []string{"MULTICA_TASK_ID", "MULTICA_AGENT_ID", "MULTICA_DAEMON_PORT", "MULTICA_TASK_CONFIG_ROOT"} {
+		t.Setenv(key, "")
+	}
+	cmd := newGraphCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"list", "--runs", "--search", "A & B", "--state", "blocked", "--cursor", "opaque", "--limit", "10"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGraphRuntimeBindingsRejectDuplicateNode(t *testing.T) {
 	if _, err := parseGraphRuntimeBindings([]string{"implement=runtime-1", "implement=runtime-2"}); err == nil {
 		t.Fatal("duplicate node runtime must be rejected")

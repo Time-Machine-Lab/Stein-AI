@@ -124,6 +124,9 @@ func (s *GraphService) ReconcileRun(ctx context.Context, ws, id string) (GraphRu
 	if err != nil {
 		return run, err
 	}
+	if version.Definition.SchemaVersion == 2 {
+		return s.reconcileRunV2(ctx, tx, run, version, before)
+	}
 	var notify []db.AgentTaskQueue
 	var stop []string
 	if run.Deadline != nil && !run.Deadline.After(time.Now()) && run.ControlState != "cancel_requested" {

@@ -48,7 +48,7 @@ func IsTerminalRun(state RunState) bool {
 	return state == RunSucceeded || state == RunRejected || state == RunFailed || state == RunCancelled
 }
 func IsTerminalNode(state NodeState) bool {
-	return state == NodeSucceeded || state == NodeRejected || state == NodeFailed || state == NodeCancelled
+	return state == NodeSucceeded || state == NodeRejected || state == NodeFailed || state == NodeCancelled || state == NodeSkipped
 }
 
 type Admission struct {
@@ -279,7 +279,7 @@ func NodeIssueStatus(state NodeState) string {
 		return "blocked"
 	case NodeSucceeded:
 		return "done"
-	case NodeCancelled:
+	case NodeCancelled, NodeSkipped:
 		return "cancelled"
 	default:
 		return "blocked"

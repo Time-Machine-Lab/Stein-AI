@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY graph_trigger_event_root_idx ON graph_trigger_event(root_issue_id);

@@ -41,6 +41,9 @@ type antigravityBackend struct {
 }
 
 func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if b.cfg.ReplaceEnvironment {
+		return b.executeGraph(ctx, prompt, opts)
+	}
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "agy"
@@ -86,7 +89,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -97,7 +100,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[agy:stderr] "), agentStderrTailBytes)
 	cmd.Stderr = stderrBuf
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		_ = os.Remove(logPath)
 		return nil, fmt.Errorf("start agy: %w", err)

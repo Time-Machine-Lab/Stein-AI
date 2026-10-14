@@ -224,7 +224,8 @@ type RuntimeLocalSkillImportRequest struct {
 	// SupportsConflict records whether the initiating client opted into the
 	// structured-conflict contract; consulted at report time to decide between
 	// the new `conflict` status and the legacy `failed` behavior.
-	SupportsConflict bool                           `json:"supports_conflict,omitempty"`
+	SupportsConflict bool `json:"supports_conflict,omitempty"`
+	sequence         uint64
 	Status           RuntimeLocalSkillRequestStatus `json:"status"`
 	Skill            *SkillWithFilesResponse        `json:"skill,omitempty"`
 	Conflict         *LocalSkillImportConflict      `json:"conflict,omitempty"`
@@ -349,8 +350,9 @@ func (s *InMemoryLocalSkillListStore) Fail(_ context.Context, id string, errMsg 
 // InMemoryLocalSkillImportStore mirrors InMemoryLocalSkillListStore for import
 // requests. Same single-node vs. multi-node caveat.
 type InMemoryLocalSkillImportStore struct {
-	mu       sync.Mutex
-	requests map[string]*RuntimeLocalSkillImportRequest
+	mu           sync.Mutex
+	requests     map[string]*RuntimeLocalSkillImportRequest
+	nextSequence uint64
 }
 
 func NewInMemoryLocalSkillImportStore() *InMemoryLocalSkillImportStore {
@@ -367,7 +369,9 @@ func (s *InMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSki
 		}
 	}
 
+	s.nextSequence++
 	req := &RuntimeLocalSkillImportRequest{
+		sequence:         s.nextSequence,
 		ID:               randomID(),
 		RuntimeID:        input.RuntimeID,
 		SkillKey:         input.SkillKey,
@@ -420,7 +424,7 @@ func (s *InMemoryLocalSkillImportStore) PopPending(_ context.Context, runtimeID 
 	for _, req := range s.requests {
 		applyLocalSkillImportTimeout(req, now)
 		if req.RuntimeID == runtimeID && req.Status == RuntimeLocalSkillPending {
-			if oldest == nil || req.CreatedAt.Before(oldest.CreatedAt) {
+			if oldest == nil || localSkillImportBefore(req, oldest) {
 				oldest = req
 			}
 		}
@@ -449,7 +453,7 @@ func (s *InMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runti
 		}
 	}
 	sort.Slice(pending, func(i, j int) bool {
-		return pending[i].CreatedAt.Before(pending[j].CreatedAt)
+		return localSkillImportBefore(pending[i], pending[j])
 	})
 
 	if limit > len(pending) {
@@ -465,6 +469,15 @@ func (s *InMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runti
 		result = append(result, req)
 	}
 	return result, nil
+}
+
+// Wall clocks can give several creates the same timestamp (notably on
+// Windows). Preserve enqueue order instead of falling back to map iteration.
+func localSkillImportBefore(a, b *RuntimeLocalSkillImportRequest) bool {
+	if a.CreatedAt.Equal(b.CreatedAt) {
+		return a.sequence < b.sequence
+	}
+	return a.CreatedAt.Before(b.CreatedAt)
 }
 
 func (s *InMemoryLocalSkillImportStore) Complete(_ context.Context, id string, skill SkillWithFilesResponse) error {

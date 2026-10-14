@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/graph"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -3597,6 +3598,9 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 
 	apiIDs := make(map[string]string, len(workspaces)) // id -> name
 	for _, ws := range workspaces {
+		if !d.cfg.permitsWorkspace(ws.ID) {
+			continue
+		}
 		apiIDs[ws.ID] = ws.Name
 	}
 
@@ -3758,8 +3762,8 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 		d.notifyRuntimeSetChanged()
 	}
 
-	if len(d.allRuntimeIDs()) == 0 && registered == 0 && len(workspaces) > 0 {
-		return fmt.Errorf("failed to register runtimes for any of the %d workspace(s)", len(workspaces))
+	if len(d.allRuntimeIDs()) == 0 && registered == 0 && len(apiIDs) > 0 {
+		return fmt.Errorf("failed to register runtimes for any of the %d workspace(s)", len(apiIDs))
 	}
 	if registered > 0 || removed > 0 {
 		d.logger.Debug("workspace sync done", "registered", registered, "removed", removed, "tracked", len(apiIDs))
@@ -4110,20 +4114,22 @@ func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID stri
 		Description string `json:"description,omitempty"`
 	}
 	type modelWire struct {
-		ID           string                 `json:"id"`
-		Label        string                 `json:"label"`
-		Provider     string                 `json:"provider,omitempty"`
-		Default      bool                   `json:"default,omitempty"`
-		Thinking     *modelThinkingWire     `json:"thinking,omitempty"`
-		ServiceTiers []modelServiceTierWire `json:"service_tiers,omitempty"`
+		EffectiveModel string                 `json:"effective_model,omitempty"`
+		ID             string                 `json:"id"`
+		Label          string                 `json:"label"`
+		Provider       string                 `json:"provider,omitempty"`
+		Default        bool                   `json:"default,omitempty"`
+		Thinking       *modelThinkingWire     `json:"thinking,omitempty"`
+		ServiceTiers   []modelServiceTierWire `json:"service_tiers,omitempty"`
 	}
 	wire := make([]modelWire, 0, len(models))
 	for _, m := range models {
 		entry := modelWire{
-			ID:       m.ID,
-			Label:    m.Label,
-			Provider: m.Provider,
-			Default:  m.Default,
+			EffectiveModel: m.EffectiveModel,
+			ID:             m.ID,
+			Label:          m.Label,
+			Provider:       m.Provider,
+			Default:        m.Default,
 		}
 		if m.Thinking != nil {
 			levels := make([]thinkingLevelWire, 0, len(m.Thinking.SupportedLevels))
@@ -6133,6 +6139,9 @@ func skillRefFromBundle(bundle SkillData) SkillRefData {
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
+	if task.Graph != nil && task.Graph.NodeSpec.Node.Type == graph.NodeTypeScript {
+		return d.runGraphScript(ctx, task, taskLog)
+	}
 	graphExecutionStopped := true // Preparation has not launched a provider process.
 	if task.Graph != nil {
 		defer func() { taskResult.GraphExecutionStopped = &graphExecutionStopped }()
@@ -6144,14 +6153,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		if err := applyFrozenGraphAgent(&task); err != nil {
 			return TaskResult{}, err
 		}
-		if provider != "codex" {
-			return TaskResult{}, fmt.Errorf("Graph V1 supports only the built-in Codex runtime")
-		}
-		if len(task.Agent.CustomArgs) != 0 {
-			return TaskResult{}, fmt.Errorf("Graph V1 does not support custom provider arguments")
-		}
-		if raw := strings.TrimSpace(string(task.Agent.RuntimeConfig)); raw != "" && raw != "null" && raw != "{}" {
-			return TaskResult{}, fmt.Errorf("Graph V1 does not support provider runtime config overrides")
+		if err := agent.ValidateGraphLaunch(provider, task.Agent.CustomArgs, nil); err != nil {
+			return TaskResult{}, err
 		}
 		if strings.TrimSpace(task.Agent.Model) == "" {
 			return TaskResult{}, fmt.Errorf("Graph requires an explicit frozen model")
@@ -6215,7 +6218,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var usesCustomProfileCommand bool
 	if customSpec, isCustom := d.customProfileLaunchForRuntime(task.RuntimeID); isCustom {
 		if task.Graph != nil {
-			return TaskResult{}, fmt.Errorf("Graph V1 does not support custom runtime launch commands")
+			if err := validateFrozenGraphRuntime(task, provider, customSpec.path, customSpec.fixedArgs); err != nil {
+				return TaskResult{}, err
+			}
 		}
 		usesCustomProfileCommand = true
 		entry.Path = customSpec.path
@@ -6312,7 +6317,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if task.Graph != nil {
 		// No stable conversation key: every attempt gets a private session store.
-		taskCtx = execenv.TaskContextForEnv{GraphInstructions: buildGraphPrompt(task), AgentID: agentID, AgentName: agentName, AgentInstructions: instructions, AgentSkills: convertSkillsForEnv(skills), DisabledRuntimeSkills: convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider)}
+		taskCtx = execenv.TaskContextForEnv{GraphInstructions: buildGraphPrompt(task), GraphEnvironment: task.Agent.CustomEnv, GraphNativeAgentID: task.Agent.Model, GraphEffectiveModel: task.Agent.GraphEffectiveModel, AgentID: agentID, AgentName: agentName, AgentInstructions: instructions, AgentSkills: convertSkillsForEnv(skills), DisabledRuntimeSkills: convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider)}
 	}
 
 	// Mark candidate env roots as active before any env work so the GC loop
@@ -6361,7 +6366,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var agentMcpConfig json.RawMessage
 	var effectiveMcpConfig json.RawMessage
 	var cursorMcpAuthSource string
-	remoteMCPConfig, remoteMCPDiagnostics, remoteMCPBrokers, remoteMCPErr := startTaskRemoteMCPBrokers(
+	brokerStarter := startTaskRemoteMCPBrokers
+	if task.Graph != nil {
+		brokerStarter = startGraphRemoteMCPBrokers
+	}
+	remoteMCPConfig, remoteMCPDiagnostics, remoteMCPBrokers, remoteMCPErr := brokerStarter(
 		prepareCtx, ctx, task.ID, provider, task.RemoteMCPConnections,
 		func(resolveCtx context.Context, contributionID string) (http.Header, error) {
 			return d.client.ResolveRemoteMCPCredential(resolveCtx, task.RemoteMCPDaemonToken, task.ID, contributionID)
@@ -6375,18 +6384,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		defer remoteMCPBrokers.Close()
 	}
 	for _, diagnostic := range remoteMCPDiagnostics {
-		if task.Graph != nil {
-			return TaskResult{}, fmt.Errorf("Graph Remote MCP configuration is unavailable: %s", diagnostic)
-		}
 		taskLog.Warn("Remote MCP degraded", "reason", diagnostic)
 	}
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
 		effectiveMcpConfig = agentMcpConfig
 		if task.Graph != nil {
-			if len(effectiveMcpConfig) == 0 || string(effectiveMcpConfig) == "null" {
-				effectiveMcpConfig = json.RawMessage(`{"mcpServers":{}}`)
-			}
+			effectiveMcpConfig = normalizeGraphMcpConfig(effectiveMcpConfig)
 		} else if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, agentMcpConfig); mergeErr != nil {
 			taskLog.Warn("mcp_config: runtime merge failed; using agent configuration only",
 				"provider", provider,
@@ -6574,6 +6578,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Provider:              provider,
 			CodexVersion:          codexVersion,
 			OpenclawBin:           openclawBin,
+			GraphRuntimeArgs:      profileFixedArgs,
 			McpConfig:             effectiveMcpConfig,
 			CursorMcpAuthSource:   cursorMcpAuthSource,
 			OpenclawGateway:       openclawGateway,
@@ -6924,14 +6929,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
-	if provider == "reasonix" {
+	if provider == "reasonix" && task.Graph == nil {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("prepare reasonix state home: %w", err)
 		}
 		agentEnv["REASONIX_STATE_HOME"] = reasonixStateHome
 	}
-	if provider == "dsh" {
+	if provider == "dsh" && task.Graph == nil {
 		dshSessionRoot, err := prepareDshTaskSessionRoot(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("prepare dsh session root: %w", err)
@@ -6941,7 +6946,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	var inheritedEnvironment = os.Environ()
 	if task.Graph != nil {
-		agentEnv, err = graphExecutionEnvironment(env, agentEnv, agentCustomEnv)
+		agentEnv, err = graphExecutionEnvironment(provider, env, agentEnv, agentCustomEnv)
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -7136,6 +7141,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		execOpts.ResumeSessionID = ""
 		execOpts.ResumeExpected = false
 		execOpts.ResumeContinuityNotice = ""
+		if err := agent.ValidateGraphOptions(provider, execOpts); err != nil {
+			return TaskResult{}, err
+		}
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
@@ -7159,7 +7167,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// as always included, and a real kiro-cli 2.13.0 ACP smoke confirms it.
 	// Prepending the full runtime brief into the ACP user prompt duplicates that
 	// context and bloats every turn.
-	if providerNeedsInlineSystemPrompt(provider) {
+	if providerNeedsInlineSystemPrompt(provider) || (task.Graph != nil && (provider == "pi" || provider == "omp")) {
 		execOpts.SystemPrompt = runtimeBrief
 	}
 
@@ -7248,7 +7256,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			taskLog.Warn("execenv: re-inject cold runtime config for fresh retry failed (non-fatal)", "error", briefErr)
 		} else {
 			runtimeBrief = freshBrief
-			if providerNeedsInlineSystemPrompt(provider) {
+			if providerNeedsInlineSystemPrompt(provider) || (task.Graph != nil && (provider == "pi" || provider == "omp")) {
 				execOpts.SystemPrompt = runtimeBrief
 			}
 		}
@@ -8725,6 +8733,30 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 		return nil
 	}
 	return append([]string(nil), args...)
+}
+
+// normalizeGraphMcpConfig makes a frozen Graph MCP configuration safe to hand to
+// a provider CLI. An absent or null configuration becomes an empty server set,
+// and an object that omits mcpServers gains an empty record: Claude rejects a
+// config without one ("mcpServers: expected record, received undefined"), and a
+// published agent with no MCP servers freezes as `{}`.
+func normalizeGraphMcpConfig(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return json.RawMessage(`{"mcpServers":{}}`)
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return raw
+	}
+	if _, ok := top["mcpServers"]; ok {
+		return raw
+	}
+	top["mcpServers"] = json.RawMessage(`{}`)
+	normalized, err := json.Marshal(top)
+	if err != nil {
+		return raw
+	}
+	return normalized
 }
 
 // graphStopEvidenceWait bounds how long a cancelled Graph attempt waits for the

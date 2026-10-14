@@ -13,6 +13,13 @@ import (
 
 const gracefulStopTimeout = time.Second
 
+// UnconfirmedStopError means physical termination could not be established.
+// Durable workflows must retain the attempt until a later stop receipt.
+type UnconfirmedStopError struct{ Err error }
+
+func (e *UnconfirmedStopError) Error() string { return "stop process tree: " + e.Err.Error() }
+func (e *UnconfirmedStopError) Unwrap() error { return e.Err }
+
 // CombinedOutput runs an unstarted command and returns its combined output.
 // Cancellation terminates the entire process tree, waits for it to disappear,
 // and returns the context cause rather than a platform-specific exit status.
@@ -59,7 +66,7 @@ func run(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration) error {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		_ = controller.finish(cmd)
-		return fmt.Errorf("attach process tree: %w", err)
+		return &UnconfirmedStopError{Err: fmt.Errorf("attach process tree: %w", err)}
 	}
 
 	waitDone := make(chan error, 1)
@@ -83,7 +90,7 @@ func run(ctx context.Context, cmd *exec.Cmd, waitDelay time.Duration) error {
 	}
 	finishErr := controller.finish(cmd)
 	if lifecycleErr := errors.Join(stopErr, finishErr); lifecycleErr != nil {
-		return fmt.Errorf("stop process tree: %w", lifecycleErr)
+		return &UnconfirmedStopError{Err: lifecycleErr}
 	}
 	if cancelled {
 		return context.Cause(ctx)

@@ -149,7 +149,7 @@ func (b *grokBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	childEnv := buildEnv(b.cfg.Env)
+	childEnv := b.cfg.executionEnvironment()
 	cmd.Env = childEnv
 
 	stdout, err := cmd.StdoutPipe()
@@ -172,7 +172,7 @@ func (b *grokBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		return nil, fmt.Errorf("grok stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start grok: %w", err)
 	}
@@ -312,7 +312,12 @@ func (b *grokBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 
 		// Drop MCP entries whose remote transport the runtime didn't advertise.
 		// See hermes.go for why sending an unsupported transport tanks session/new.
+		frozenMCPCount := len(mcpServers)
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "grok", b.cfg)
+		if b.cfg.ReplaceEnvironment && len(mcpServers) != frozenMCPCount {
+			resCh <- Result{Status: "failed", Error: "runtime cannot load every frozen Graph MCP transport"}
+			return
+		}
 
 		cwd := opts.Cwd
 		if cwd == "" {

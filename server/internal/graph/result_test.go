@@ -111,6 +111,59 @@ func TestCanonicalJSONPreservesLargeNumbersAndNormalizesSpelling(t *testing.T) {
 	}
 }
 
+func TestV2ScriptManifestAndResultReuseBoundedTaskContract(t *testing.T) {
+	spec := testNodeSpec(t)
+	spec.Node = Node{Key: "transform", Type: NodeTypeScript, AgentID: "agent-1", Script: &ScriptConfig{Language: "javascript", Code: "return input;", TimeoutSeconds: 60}, MaxAttempts: 2, TimeoutSeconds: 60, ExecutionMode: ExecutionNone, OutputSchema: json.RawMessage(`{"type":"object"}`)}
+	identity := testIdentity()
+	identity.InputHash = spec.InputHash
+	manifest, err := NewAttemptManifest(spec, identity)
+	if err != nil {
+		t.Fatalf("valid script manifest rejected: %v", err)
+	}
+	if _, _, err := CanonicalManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateResult(spec.Node, Result{Identity: identity, Outcome: OutcomePass, Output: json.RawMessage(`{"value":1}`)}); err != nil {
+		t.Fatalf("valid script output rejected: %v", err)
+	}
+	spec.Node.ExecutionMode = ExecutionProduceCommit
+	if _, _, err := CanonicalNodeSpec(spec); err == nil {
+		t.Fatal("script code delivery accepted")
+	}
+}
+
+func TestV2NodeSpecFreezesInstanceIdentity(t *testing.T) {
+	spec := testNodeSpec(t)
+	raw, _ := json.Marshal(spec)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["instance_key"] = json.RawMessage(`"scope-1/implement"`)
+	raw, _ = json.Marshal(fields)
+	var first NodeSpec
+	if err := json.Unmarshal(raw, &first); err != nil {
+		t.Fatal(err)
+	}
+	_, a, err := CanonicalNodeSpec(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields["instance_key"] = json.RawMessage(`"scope-2/implement"`)
+	raw, _ = json.Marshal(fields)
+	var second NodeSpec
+	if err := json.Unmarshal(raw, &second); err != nil {
+		t.Fatal(err)
+	}
+	_, b, err := CanonicalNodeSpec(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("distinct loop instances share a spec digest")
+	}
+}
+
 // Artifact identities are persisted in a uuid column. An ID that is not a UUID
 // used to pass submission and then fail reconciliation forever, wedging the
 // run in an unrecoverable loop; it must be rejected when the result is

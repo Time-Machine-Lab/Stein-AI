@@ -1,8 +1,10 @@
-// Package graph defines the bounded Graph V1 contract independently of storage and execution.
+// Package graph defines bounded Graph contracts independently of storage and execution.
 package graph
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -38,22 +40,28 @@ const (
 type BindingSource string
 
 const (
-	BindingRunInput   BindingSource = "run_input"
-	BindingNodeOutput BindingSource = "node_output"
-	BindingConstant   BindingSource = "constant"
-	BindingObject     BindingSource = "object"
+	BindingRunInput       BindingSource = "run_input"
+	BindingNodeOutput     BindingSource = "node_output"
+	BindingConstant       BindingSource = "constant"
+	BindingObject         BindingSource = "object"
+	BindingIterationIndex BindingSource = "iteration_index"
 )
 
 type Definition struct {
-	SchemaVersion int             `json:"schema_version"`
-	Name          string          `json:"name"`
-	Nodes         []Node          `json:"nodes"`
-	Edges         []Edge          `json:"edges"`
-	InputSchema   json.RawMessage `json:"input_schema"`
+	SchemaVersion  int                     `json:"schema_version"`
+	Name           string                  `json:"name"`
+	Nodes          []Node                  `json:"nodes"`
+	Edges          []Edge                  `json:"edges"`
+	InputSchema    json.RawMessage         `json:"input_schema"`
+	OutputSchema   json.RawMessage         `json:"output_schema,omitempty"`
+	Outputs        map[string]InputBinding `json:"outputs,omitempty"`
+	MaxConcurrency int                     `json:"max_concurrency,omitempty"`
+	Layout         *Layout                 `json:"layout,omitempty"`
 }
 
 type Node struct {
 	Key            string                  `json:"node_key"`
+	Label          string                  `json:"label,omitempty"`
 	Type           NodeType                `json:"type"`
 	AgentID        string                  `json:"agent_id,omitempty"`
 	Instructions   string                  `json:"instructions,omitempty"`
@@ -63,19 +71,29 @@ type Node struct {
 	MaxAttempts    int                     `json:"max_attempts,omitempty"`
 	TimeoutSeconds int                     `json:"timeout_seconds,omitempty"`
 	ApproverID     string                  `json:"approver_id,omitempty"`
+	Condition      *Condition              `json:"condition,omitempty"`
+	Approval       *ApprovalConfig         `json:"approval,omitempty"`
+	Loop           *LoopConfig             `json:"loop,omitempty"`
+	Subgraph       *SubgraphConfig         `json:"subgraph,omitempty"`
+	Delay          *DelayConfig            `json:"delay,omitempty"`
+	HTTP           *HTTPConfig             `json:"http,omitempty"`
+	Script         *ScriptConfig           `json:"script,omitempty"`
 }
 
 type Edge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	Port string `json:"port,omitempty"`
 }
 
 type InputBinding struct {
-	Source  BindingSource           `json:"source"`
-	NodeKey string                  `json:"node_key,omitempty"`
-	Path    string                  `json:"path,omitempty"`
-	Value   json.RawMessage         `json:"value,omitempty"`
-	Fields  map[string]InputBinding `json:"fields,omitempty"`
+	Source   BindingSource           `json:"source"`
+	NodeKey  string                  `json:"node_key,omitempty"`
+	Path     string                  `json:"path,omitempty"`
+	Value    json.RawMessage         `json:"value,omitempty"`
+	Fields   map[string]InputBinding `json:"fields,omitempty"`
+	Default  json.RawMessage         `json:"default,omitempty"`
+	Optional bool                    `json:"optional,omitempty"`
 }
 
 // ValidationError keeps a stable field path for HTTP and editor diagnostics.
@@ -91,7 +109,7 @@ var nodeKeyPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 func ParseDefinition(data []byte) (Definition, error) {
 	var d Definition
-	if _, err := decodeJSON(data, MaxDefinitionBytes); err != nil {
+	if _, err := decodeJSONWithDepth(data, MaxDefinitionBytes, 64); err != nil {
 		return d, err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -103,8 +121,28 @@ func ParseDefinition(data []byte) (Definition, error) {
 }
 
 func ValidateDefinition(d Definition) error {
+	if d.SchemaVersion == LatestSchemaVersion {
+		_, err := validateDefinitionV2(d, 0, false)
+		return err
+	}
 	if d.SchemaVersion != SchemaVersion {
-		return invalid("schema_version", "only version 1 is supported")
+		return invalid("schema_version", "only versions 1 and 2 are supported")
+	}
+	if len(d.OutputSchema) > 0 || len(d.Outputs) > 0 || d.MaxConcurrency != 0 || d.Layout != nil {
+		return invalid("definition", "version 2 configuration is not valid in version 1")
+	}
+	for _, n := range d.Nodes {
+		if len(n.Label) > 200 {
+			return invalid("nodes."+n.Key+".label", "must contain at most 200 bytes")
+		}
+		if hasV2Config(n) {
+			return invalid("nodes."+n.Key, "version 2 configuration is not valid in version 1")
+		}
+	}
+	for _, e := range d.Edges {
+		if e.Port != "" {
+			return invalid("edges", "ports require version 2")
+		}
 	}
 	if strings.TrimSpace(d.Name) == "" || len(d.Name) > 200 {
 		return invalid("name", "must contain 1 to 200 bytes")
@@ -203,6 +241,9 @@ func OrderedNodes(d Definition) ([]Node, error) {
 }
 
 func orderedNodes(d Definition) ([]Node, error) {
+	if d.SchemaVersion == LatestSchemaVersion {
+		return topologicalNodes(d)
+	}
 	if len(d.Nodes) < 4 || len(d.Nodes) > MaxAgentNodes+3 {
 		return nil, invalid("nodes", "requires start, 1 to 16 agents, approval, and end")
 	}
@@ -281,6 +322,23 @@ func CanonicalDefinition(d Definition) ([]byte, string, error) {
 		return nil, "", err
 	}
 	d.Nodes = nodes
+	if d.SchemaVersion == LatestSchemaVersion {
+		canonicalizeV2(&d)
+		raw, err := json.Marshal(d)
+		if err != nil {
+			return nil, "", err
+		}
+		value, err := decodeJSONWithDepth(raw, MaxDefinitionBytes, 64)
+		if err != nil {
+			return nil, "", err
+		}
+		raw, err = json.Marshal(value)
+		if err != nil {
+			return nil, "", err
+		}
+		sum := sha256.Sum256(raw)
+		return raw, hex.EncodeToString(sum[:]), nil
+	}
 	d.Edges = make([]Edge, 0, len(nodes)-1)
 	for i := 1; i < len(nodes); i++ {
 		d.Edges = append(d.Edges, Edge{From: nodes[i-1].Key, To: nodes[i].Key})
@@ -289,6 +347,9 @@ func CanonicalDefinition(d Definition) ([]byte, string, error) {
 }
 
 func validateBinding(b InputBinding, input map[string]any, prior map[string]map[string]any, depth int) error {
+	if b.Optional || len(b.Default) > 0 {
+		return fmt.Errorf("optional and default bindings require version 2")
+	}
 	if depth > MaxDepth {
 		return fmt.Errorf("input binding nesting exceeds %d", MaxDepth)
 	}

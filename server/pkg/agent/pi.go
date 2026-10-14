@@ -216,7 +216,12 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	// The path doubles as our opaque session identifier: we return it as
 	// SessionID and expect it back as ResumeSessionID on the next turn.
 	sessionPath := opts.ResumeSessionID
-	if sessionPath == "" {
+	if b.cfg.ReplaceEnvironment {
+		if b.cfg.Env["HOME"] == "" {
+			return nil, fmt.Errorf("Graph Pi execution requires a private HOME")
+		}
+		sessionPath = filepath.Join(b.cfg.Env["HOME"], "sessions", fmt.Sprintf("%d.jsonl", time.Now().UnixNano()))
+	} else if sessionPath == "" {
 		p, err := newPiSessionPath()
 		if err != nil {
 			return nil, fmt.Errorf("%s session path: %w", label, err)
@@ -230,6 +235,23 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	runCtx, cancel := runContext(ctx, timeout)
 
 	args := buildPiArgs(sessionPath, opts, b.cfg.Logger)
+	if b.cfg.ReplaceEnvironment {
+		if label == "omp" {
+			args = append(args, "--no-extensions", "--no-skills", "--no-rules", "--config", filepath.Join(b.cfg.Env["HOME"], ".omp", "agent", "config.yml"))
+		} else {
+			args = append(args, "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve")
+			if hasGraphMCPServers(opts.McpConfig) {
+				args = append(args, "--extension", "builtin:mcp")
+				if err := b.validateGraphPiMCP(runCtx, execName, lookedUp, opts.Cwd); err != nil {
+					cancel()
+					return nil, err
+				}
+			}
+		}
+		if opts.SystemPrompt != "" {
+			args = append(args, "--append-system-prompt", opts.SystemPrompt)
+		}
+	}
 	cmd, argv0, cmdArgs := b.cfg.commandAt(execName).execVia(runCtx, choosePiInvocation, lookedUp, args, b.cfg.Logger)
 	hideAgentWindow(cmd)
 	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
@@ -237,7 +259,10 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
+	if b.cfg.ReplaceEnvironment && label == "omp" {
+		cmd.Env = mergeEnv(cmd.Env, map[string]string{"OMP_MCP_REQUIRE_READY": "1", "OMP_MCP_TIMEOUT_MS": "30000", "PI_CONFIG_DIR": ".omp", "OMP_PROFILE": "", "PI_PROFILE": "", "PI_CODING_AGENT_DIR": filepath.Join(b.cfg.Env["HOME"], ".omp", "agent")})
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -258,7 +283,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	closeStdin := func() { closeStdinOnce.Do(func() { _ = stdin.Close() }) }
 	cmd.Stderr = newLogWriter(b.cfg.Logger, "["+label+":stderr] ")
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		closeStdin()
 		cancel()
 		return nil, fmt.Errorf("start %s: %w", label, err)

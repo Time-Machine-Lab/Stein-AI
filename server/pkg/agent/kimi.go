@@ -71,7 +71,7 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -102,7 +102,7 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		return nil, fmt.Errorf("kimi stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start kimi: %w", err)
 	}
@@ -231,7 +231,13 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		// advertise. See the matching comment in hermes.go for the why —
 		// shipping an http/sse entry to a stdio-only runtime tanks the
 		// whole session/new.
+		frozenMCPCount := len(mcpServers)
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "kimi", b.cfg)
+
+		if b.cfg.ReplaceEnvironment && len(mcpServers) != frozenMCPCount {
+			resCh <- Result{Status: "failed", Error: "runtime cannot load every frozen Graph MCP transport"}
+			return
+		}
 
 		// 2. Create or resume a session.
 		cwd := opts.Cwd
@@ -346,6 +352,10 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 				"value":     opts.ThinkingLevel,
 			})
 			if err != nil {
+				if b.cfg.ReplaceEnvironment {
+					resCh <- Result{Status: "failed", Error: "Kimi rejected frozen Graph reasoning effort"}
+					return
+				}
 				b.cfg.Logger.Warn("kimi rejected the thinking level request; sending the prompt anyway",
 					"requested_level", opts.ThinkingLevel,
 					"effective_level", "unchanged",
@@ -354,6 +364,10 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			} else {
 				effectiveLevel, confirmed := acpConfigOptionCurrentValue(configResult, "thinking")
 				if !confirmed || effectiveLevel != opts.ThinkingLevel {
+					if b.cfg.ReplaceEnvironment {
+						resCh <- Result{Status: "failed", Error: "Kimi did not confirm frozen Graph reasoning effort"}
+						return
+					}
 					if !confirmed {
 						effectiveLevel = "unknown"
 					}

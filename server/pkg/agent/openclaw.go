@@ -61,7 +61,16 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		return nil, fmt.Errorf("openclaw executable not found at %q: %w", execPath, err)
 	}
 
-	if err := checkOpenclawVersion(ctx, b.cfg.commandAt(execPath)); err != nil {
+	var versionErr error
+	if b.cfg.ReplaceEnvironment {
+		if opts.OpenclawMode == "gateway" {
+			return nil, fmt.Errorf("Graph OpenClaw requires a Multica daemon on the execution host using local mode; gateway mode cannot prove isolated checkout, scoped MCP or remote tool termination")
+		}
+		versionErr = b.checkGraphVersion(ctx, execPath)
+	} else {
+		versionErr = checkOpenclawVersion(ctx, b.cfg.commandAt(execPath))
+	}
+	if err := versionErr; err != nil {
 		return nil, err
 	}
 
@@ -97,7 +106,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	// openclaw writes its --json output to stdout. Stderr carries log
 	// overflow (security warnings, tool errors, etc.) — capture it via a
@@ -110,7 +119,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}
 	cmd.Stderr = newLogWriter(b.cfg.Logger, "[openclaw:stderr] ")
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start openclaw: %w", err)
 	}
@@ -762,4 +771,25 @@ type openclawPayload struct {
 type openclawMeta struct {
 	DurationMs int64          `json:"durationMs"`
 	AgentMeta  map[string]any `json:"agentMeta"`
+}
+
+func (b *openclawBackend) checkGraphVersion(ctx context.Context, executable string) error {
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := b.cfg.commandAt(executable).exec(checkCtx, "--version")
+	cmd.Env = b.cfg.executionEnvironment()
+	hideAgentWindow(cmd)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	if err := b.cfg.startExecution(cmd); err != nil {
+		return err
+	}
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("Graph OpenClaw version check failed: %w", err)
+	}
+	version, ok := parseOpenclawVersion(output.String())
+	if !ok || compareOpenclawVersion(version, minOpenclawVersion) < 0 {
+		return fmt.Errorf("Graph OpenClaw requires version %s or newer", minOpenclawVersion)
+	}
+	return nil
 }

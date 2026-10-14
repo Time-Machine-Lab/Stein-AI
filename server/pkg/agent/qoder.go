@@ -107,7 +107,7 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -131,7 +131,7 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		return nil, fmt.Errorf("qoder stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start qoder: %w", err)
 	}
@@ -244,7 +244,12 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		// advertise. See the matching comment in hermes.go for why
 		// unconditionally sending http/sse to a stdio-only ACP runtime
 		// tanks the whole session/new.
+		frozenMCPCount := len(mcpServers)
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "qoder", b.cfg)
+		if b.cfg.ReplaceEnvironment && len(mcpServers) != frozenMCPCount {
+			resCh <- Result{Status: "failed", Error: "runtime cannot load every frozen Graph MCP transport"}
+			return
+		}
 
 		cwd := opts.Cwd
 		if cwd == "" {

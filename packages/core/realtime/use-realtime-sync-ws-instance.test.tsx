@@ -87,13 +87,34 @@ describe("useRealtimeSync — ws instance change", () => {
     // workspace-scoped bulk invalidation.
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
+  it("refreshes Graph details and lists when a graph-managed issue changes", () => {
+    const ws = createMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+    const handler = vi
+      .mocked(ws.on)
+      .mock.calls.find(([event]) => event === "issue:updated")?.[1];
+    expect(handler).toBeDefined();
+    handler?.({
+      issue: {
+        id: "graph-issue",
+        graph_run_id: "run-1",
+        execution_mode: "graph",
+        status: "in_progress",
+      },
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: graphKeys.all("ws-1"),
+    });
+  });
 
   it("does not invalidate when ws goes from instance to null", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderHook(({ ws }) => useRealtimeSync(ws, stores), {
+      initialProps: { ws: ws1 as WSClient | null },
+      wrapper: createWrapper(qc),
+    });
 
     invalidateSpy.mockClear();
     rerender({ ws: null });
@@ -103,10 +124,10 @@ describe("useRealtimeSync — ws instance change", () => {
 
   it("invalidates exactly once when a new ws instance appears after null gap", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderHook(({ ws }) => useRealtimeSync(ws, stores), {
+      initialProps: { ws: ws1 as WSClient | null },
+      wrapper: createWrapper(qc),
+    });
 
     // Simulate workspace switch: ws -> null -> new ws
     invalidateSpy.mockClear();
@@ -122,15 +143,17 @@ describe("useRealtimeSync — ws instance change", () => {
     // prefixes + 1 workspaceKeys.list() + 1 cross-workspace inbox unread
     // summary = 31 calls)
     expect(invalidateSpy).toHaveBeenCalledTimes(31);
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: graphKeys.all("ws-1") });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: graphKeys.all("ws-1"),
+    });
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderHook(({ ws }) => useRealtimeSync(ws, stores), {
+      initialProps: { ws: ws1 as WSClient | null },
+      wrapper: createWrapper(qc),
+    });
 
     invalidateSpy.mockClear();
     // Rerender with same instance
@@ -141,10 +164,10 @@ describe("useRealtimeSync — ws instance change", () => {
 
   it("invalidates chat, pins, labels, and invitations queries on ws instance change", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderHook(({ ws }) => useRealtimeSync(ws, stores), {
+      initialProps: { ws: ws1 as WSClient | null },
+      wrapper: createWrapper(qc),
+    });
 
     invalidateSpy.mockClear();
     rerender({ ws: null });
@@ -152,7 +175,9 @@ describe("useRealtimeSync — ws instance change", () => {
     const ws2 = createMockWs();
     rerender({ ws: ws2 });
 
-    const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
+    const calls = invalidateSpy.mock.calls.map(
+      (call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey,
+    );
     expect(calls).toContainEqual(["chat", "ws-1"]);
     expect(calls).toContainEqual(["labels", "ws-1"]);
     expect(calls).toContainEqual(["workspaces", "ws-1", "invitations"]);
@@ -163,10 +188,10 @@ describe("useRealtimeSync — ws instance change", () => {
     // their own invalidation on recovery — otherwise events missed while
     // disconnected leave them stale forever (staleTime: Infinity, #3953).
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderHook(({ ws }) => useRealtimeSync(ws, stores), {
+      initialProps: { ws: ws1 as WSClient | null },
+      wrapper: createWrapper(qc),
+    });
 
     invalidateSpy.mockClear();
     rerender({ ws: null });
@@ -174,7 +199,9 @@ describe("useRealtimeSync — ws instance change", () => {
     const ws2 = createMockWs();
     rerender({ ws: ws2 });
 
-    const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
+    const calls = invalidateSpy.mock.calls.map(
+      (call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey,
+    );
     expect(calls).toContainEqual(["issues", "timeline"]);
     expect(calls).toContainEqual(["issues", "reactions"]);
     expect(calls).toContainEqual(["issues", "subscribers"]);
@@ -187,10 +214,10 @@ describe("useRealtimeSync — ws instance change", () => {
     // These keys are not under the ["chat", wsId] prefix, so they need their
     // own recovery invalidation when reconnecting after missed chat/task events.
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderHook(({ ws }) => useRealtimeSync(ws, stores), {
+      initialProps: { ws: ws1 as WSClient | null },
+      wrapper: createWrapper(qc),
+    });
 
     invalidateSpy.mockClear();
     rerender({ ws: null });
@@ -198,7 +225,9 @@ describe("useRealtimeSync — ws instance change", () => {
     const ws2 = createMockWs();
     rerender({ ws: ws2 });
 
-    const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
+    const calls = invalidateSpy.mock.calls.map(
+      (call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey,
+    );
     expect(calls).toContainEqual(["chat", "messages"]);
     expect(calls).toContainEqual(["chat", "messages-page"]);
     expect(calls).toContainEqual(["chat", "pending-task"]);
@@ -216,7 +245,9 @@ describe("useRealtimeSync — ws instance change", () => {
     invalidateSpy.mockClear();
     reconnect!();
 
-    const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
+    const calls = invalidateSpy.mock.calls.map(
+      (call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey,
+    );
     expect(calls).toContainEqual(chatKeys.messagesAll());
     expect(calls).toContainEqual(chatKeys.messagesPageAll());
     expect(calls).toContainEqual(chatKeys.pendingTaskAll());
@@ -258,7 +289,9 @@ describe("useRealtimeSync — ws instance change", () => {
 
 describe("useRealtimeSync — queued chat promotion", () => {
   it("refetches the transcript when a queued prompt starts running", () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     const ws = createMockWs();
     const invalidate = vi.spyOn(qc, "invalidateQueries");
     renderHook(() => useRealtimeSync(ws, createStores()), {
@@ -376,7 +409,9 @@ describe("useRealtimeSync — workspace:deleted self-initiated suppression", () 
 
     // useDeleteWorkspace.onSuccess owns cleanup for self-initiated deletes;
     // the handler must not have touched storage.
-    expect(defaultStorage.getItem("multica_issue_draft:delete-me")).toBe("draft");
+    expect(defaultStorage.getItem("multica_issue_draft:delete-me")).toBe(
+      "draft",
+    );
   });
 
   it("still cleans up for a delete initiated elsewhere", () => {

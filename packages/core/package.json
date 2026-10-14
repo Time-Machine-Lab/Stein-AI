@@ -152,7 +152,12 @@
     "./skills": "./skills/index.ts",
     "./skills/frontmatter": "./skills/frontmatter.ts",
     "./skills/stores": "./skills/stores/index.ts",
-    "./autopilots/stores": "./autopilots/stores/index.ts"
+    "./autopilots/stores": "./autopilots/stores/index.ts",
+    "./graphs/types": "./graphs/types.ts",
+    "./graphs/definition": "./graphs/definition.ts",
+    "./graphs/controls": "./graphs/controls.ts",
+    "./graphs/input-schema": "./graphs/input-schema.ts",
+    "./graphs/artifacts": "./graphs/artifacts.ts"
   },
   "dependencies": {
     "@formatjs/intl-localematcher": "catalog:",

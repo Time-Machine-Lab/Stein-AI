@@ -86,6 +86,7 @@ var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 
 // Config holds all daemon configuration.
 type Config struct {
+	WorkspaceIDs                   []string // explicit daemon allowlist; nil retains all discovered workspaces
 	ServerBaseURL                  string
 	DaemonID                       string
 	LegacyDaemonIDs                []string // historical daemon_ids this machine may have registered under; reported at register time so the server can merge old runtime rows
@@ -145,6 +146,7 @@ type Config struct {
 // Overrides allows CLI flags to override environment variables and defaults.
 // Zero values are ignored and the env/default value is used instead.
 type Overrides struct {
+	WorkspaceIDs      []string
 	ServerURL         string
 	WorkspacesRoot    string
 	PollInterval      time.Duration
@@ -177,6 +179,10 @@ type Overrides struct {
 // LoadConfig builds the daemon configuration from environment variables
 // and optional CLI flag overrides.
 func LoadConfig(overrides Overrides) (Config, error) {
+	workspaceIDs, scopeErr := daemonWorkspaceIDs(overrides.WorkspaceIDs, os.Getenv("MULTICA_DAEMON_WORKSPACE_IDS"))
+	if scopeErr != nil {
+		return Config{}, scopeErr
+	}
 	// Server URL: override > env > default
 	rawServerURL := envOrDefault("MULTICA_SERVER_URL", DefaultServerURL)
 	if overrides.ServerURL != "" {
@@ -517,6 +523,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		Profile:                         profile,
 		Agents:                          agents,
 		WorkspacesRoot:                  workspacesRoot,
+		WorkspaceIDs:                    workspaceIDs,
 		KeepEnvAfterTask:                keepEnv,
 		GCEnabled:                       gcEnabled,
 		GCInterval:                      gcInterval,
@@ -1098,4 +1105,41 @@ func applyOpenclawOverride(oc *cli.OpenClawOverride) {
 			_ = os.Setenv("OPENCLAW_STATE_DIR", oc.StateDir)
 		}
 	}
+}
+
+func daemonWorkspaceIDs(explicit []string, environment string) ([]string, error) {
+	values := explicit
+	if values == nil && strings.TrimSpace(environment) != "" {
+		values = strings.Split(environment, ",")
+	}
+	if values == nil {
+		return nil, nil
+	}
+	result := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("daemon workspace allowlist contains an empty workspace id")
+		}
+		if !seen[value] {
+			result = append(result, value)
+			seen[value] = true
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("daemon workspace allowlist must not be empty")
+	}
+	return result, nil
+}
+func (c Config) permitsWorkspace(id string) bool {
+	if len(c.WorkspaceIDs) == 0 {
+		return true
+	}
+	for _, allowed := range c.WorkspaceIDs {
+		if id == allowed {
+			return true
+		}
+	}
+	return false
 }

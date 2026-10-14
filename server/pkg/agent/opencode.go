@@ -129,7 +129,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		cmd.Dir = opts.Cwd
 	}
 
-	env := buildEnv(b.cfg.Env)
+	env := b.cfg.executionEnvironment()
 	// Keep daemon-mode runs non-interactive without relying on
 	// OPENCODE_PERMISSION. OpenCode deep-merges that env override into user
 	// config while preserving existing key order, so a pre-existing
@@ -183,7 +183,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	closeStdin := func() { closeStdinOnce.Do(func() { _ = stdin.Close() }) }
 	cmd.Stderr = newLogWriter(b.cfg.Logger, "[opencode:stderr] ")
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		closeStdin()
 		cancel()
 		return nil, fmt.Errorf("start opencode: %w", err)

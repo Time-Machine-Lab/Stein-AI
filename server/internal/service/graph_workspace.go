@@ -32,6 +32,7 @@ func PrepareGraphWorkspaceDeleteTx(ctx context.Context, tx pgx.Tx, workspaceID s
 	// Fixed identifiers only. Remove ownership and retained-artifact references
 	// before the existing Issue/attachment deletion steps invoke their fences.
 	for _, table := range []string{
+		"graph_trigger_event", "graph_trigger",
 		"graph_attachment_upload", "graph_artifact", "graph_approval", "graph_submission",
 		"graph_operation", "graph_run_event", "graph_task_attempt", "graph_issue_owner",
 		"graph_node_run", "graph_run", "graph_version", "graph_definition", "graph_command",

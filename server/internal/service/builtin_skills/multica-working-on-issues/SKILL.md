@@ -57,6 +57,15 @@ also require `--expected-revision` from a fresh read. Approvals additionally
 bind `--approval-id` and `--candidate-digest`. Graph task credentials cannot
 use these management commands.
 
+Human users can also open the workspace Graph page and describe a workflow
+with **Create with AI**, selecting an agent and final approver. The server's
+configured AI provider returns an editable workflow draft, including typed
+branches, parallel paths and bounded loops when requested; it does not save,
+publish or run it. Review the steps, save the draft, then publish and start
+through the normal human controls. This authoring feature does not give Graph
+node credentials permission to create or modify workflows. If the server AI
+provider is unconfigured, manual creation remains available.
+
 ## PR linking and close intent are two distinct contracts
 
 The GitHub webhook runs two separate scans over an incoming PR. They are not the

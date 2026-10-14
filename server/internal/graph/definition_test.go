@@ -28,7 +28,7 @@ func TestDefinitionRejectsUnsupportedTopologyAndConfiguration(t *testing.T) {
 		{"zero_timeout", func(d *Definition) { d.Nodes[1].TimeoutSeconds = 0 }},
 		{"unknown_mode", func(d *Definition) { d.Nodes[1].ExecutionMode = "local_directory" }},
 		{"approval_not_last", func(d *Definition) {
-			d.Edges = []Edge{{"start", "approve"}, {"approve", "implement"}, {"implement", "end"}}
+			d.Edges = []Edge{{From: "start", To: "approve"}, {From: "approve", To: "implement"}, {From: "implement", To: "end"}}
 		}},
 		{"future_reference", func(d *Definition) {
 			d.Nodes[1].Inputs["x"] = InputBinding{Source: BindingNodeOutput, NodeKey: "approve", Path: "/summary"}
