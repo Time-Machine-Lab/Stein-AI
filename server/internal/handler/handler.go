@@ -39,6 +39,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/graphhttp"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
@@ -319,7 +320,8 @@ type Handler struct {
 	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
-	LLM *llm.Client
+	LLM             *llm.Client
+	graphGeneration *graphGenerationGate
 	// VCSSecretBox encrypts/decrypts per-workspace Git provider access tokens and
 	// webhook secrets at rest (Forgejo / Gitea / GitLab). Nil when
 	// MULTICA_VCS_SECRET_KEY is unset; the connect/webhook handlers return 503
@@ -333,8 +335,9 @@ type Handler struct {
 	// trigger is a no-op) when GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY are unset,
 	// so the feature degrades cleanly on deployments without a private key.
 	// Wired in cmd/server/router.go after New.
-	PRRefresh *ghsnapshot.Manager
-	cfg       Config
+	PRRefresh         *ghsnapshot.Manager
+	GraphGitHubClient *ghsnapshot.Client
+	cfg               Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
@@ -411,8 +414,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
-		LLM: llmClient,
-		cfg: cfg,
+		LLM:             llmClient,
+		graphGeneration: &graphGenerationGate{},
+		cfg:             cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	h.GraphService = service.NewGraphService(queries, txStarter)
@@ -425,6 +429,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	h.GraphService.NotifyTask = h.TaskService.NotifyTaskEnqueued
 	h.GraphService.NotifyRun = h.notifyGraphRun
 	h.GraphService.ValidateArtifacts = h.validateGraphArtifacts
+	h.GraphService.ExecuteHTTP = graphhttp.Execute
 	h.GraphService.RequestStop = func(ctx context.Context, taskID string) error {
 		id, err := parseGraphUUID(taskID)
 		if err != nil {
@@ -444,6 +449,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		slog.Warn("github: PR snapshot pipeline disabled (invalid App private key)", "err", err)
 	}
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
+	h.GraphGitHubClient = ghClient
 
 	return h
 }

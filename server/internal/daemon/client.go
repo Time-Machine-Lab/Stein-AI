@@ -201,6 +201,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilityRPCV1,
 		protocol.DaemonCapabilityGraphExecutionV1,
+		protocol.DaemonCapabilityGraphExecutionV2,
 	}, ",")
 }
 

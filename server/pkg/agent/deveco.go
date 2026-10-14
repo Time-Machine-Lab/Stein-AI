@@ -137,13 +137,23 @@ func (b *devecoBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		cmd.Dir = opts.Cwd
 	}
 
-	env := buildEnv(b.cfg.Env)
+	env := b.cfg.executionEnvironment()
 	// Override PWD so the child DevEco process resolves its discovery root to
 	// the task workdir. cmd.Dir alone is not enough: DevEco reads PWD
 	// (inherited from the parent daemon) before falling back to process.cwd()
 	// when computing the directory it walks for AGENTS.md / .deveco/skills.
 	if opts.Cwd != "" {
 		env = append(env, "PWD="+opts.Cwd)
+	}
+	if b.cfg.ReplaceEnvironment {
+		content, err := buildOpenCodeMCPConfigContent(opts.McpConfig)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		if content != "" {
+			env = append(env, "DEVECO_CONFIG_CONTENT="+content)
+		}
 	}
 	cmd.Env = env
 
@@ -154,7 +164,7 @@ func (b *devecoBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}
 	cmd.Stderr = newLogWriter(b.cfg.Logger, "[deveco:stderr] ")
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start deveco: %w", err)
 	}

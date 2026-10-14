@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,9 @@ type GraphService struct {
 	ValidateArtifacts func(context.Context, pgx.Tx, GraphRunRecord, GraphNodeRunRecord, graph.Result, GraphTaskReceipt) error
 	NewRunsEnabled    bool
 	AdvanceEnabled    bool
+	ExecuteHTTP       func(context.Context, graph.HTTPConfig, map[string]string, json.RawMessage, string) (json.RawMessage, error)
+	effectOnce        sync.Once
+	effectSlots       chan struct{}
 }
 
 func NewGraphService(q *db.Queries, tx TxStarter) *GraphService {
@@ -45,14 +49,12 @@ func (s *GraphService) authorizeVersion(ctx context.Context, tx pgx.Tx, ws, user
 		return err
 	}
 	if s.AuthorizeSnapshot != nil {
-		for _, node := range version.Definition.Nodes {
-			if node.Type != graph.NodeTypeAgent {
-				continue
+		return graph.WalkNodes(version.Definition, func(path string, node graph.Node) error {
+			if node.Type != graph.NodeTypeAgent && node.Type != graph.NodeTypeScript {
+				return nil
 			}
-			if err := s.AuthorizeSnapshot(ctx, tx, ws, node, version.Snapshots[node.Key]); err != nil {
-				return err
-			}
-		}
+			return s.AuthorizeSnapshot(ctx, tx, ws, node, version.Snapshots[path])
+		})
 	}
 	return nil
 }
@@ -92,6 +94,15 @@ type GraphVersionRecord struct {
 	CreatedAt   time.Time                    `json:"created_at"`
 }
 type GraphRunRecord struct {
+	SchemaVersion     int                    `json:"schema_version,omitempty"`
+	GraphID           string                 `json:"graph_id,omitempty"`
+	GraphName         string                 `json:"graph_name,omitempty"`
+	Definition        *graph.Definition      `json:"definition,omitempty"`
+	Output            json.RawMessage        `json:"output,omitempty"`
+	FinishedAt        *time.Time             `json:"finished_at,omitempty"`
+	Scopes            []GraphScopeRecord     `json:"scopes,omitempty"`
+	Approvals         []GraphApprovalRecord  `json:"approvals,omitempty"`
+	TerminationState  string                 `json:"termination_state,omitempty"`
 	ID                string                 `json:"id"`
 	WorkspaceID       string                 `json:"workspace_id"`
 	RootIssueID       string                 `json:"root_issue_id"`
@@ -119,8 +130,18 @@ type GraphRunRecord struct {
 	UpdatedAt         time.Time              `json:"updated_at"`
 }
 type GraphNodeRunRecord struct {
+	InstanceKey          string                  `json:"instance_key,omitempty"`
+	ScopeID              string                  `json:"scope_id,omitempty"`
+	DefinitionPath       string                  `json:"definition_path,omitempty"`
+	Iteration            int                     `json:"iteration,omitempty"`
+	SelectedPort         string                  `json:"selected_port,omitempty"`
+	StartedAt            *time.Time              `json:"started_at,omitempty"`
+	FinishedAt           *time.Time              `json:"finished_at,omitempty"`
+	WakeAt               *time.Time              `json:"wake_at,omitempty"`
+	Effect               *GraphEffectRecord      `json:"effect,omitempty"`
 	ID                   string                  `json:"id"`
 	NodeKey              string                  `json:"node_key"`
+	Label                string                  `json:"label,omitempty"`
 	NodeType             string                  `json:"node_type"`
 	State                string                  `json:"state"`
 	IssueID              string                  `json:"issue_id,omitempty"`
@@ -156,15 +177,47 @@ type GraphSubmissionRecord struct {
 	CreatedAt   time.Time    `json:"created_at"`
 }
 type GraphApprovalRecord struct {
-	ID              string     `json:"id"`
-	ApproverID      string     `json:"approver_id"`
-	CandidateDigest string     `json:"candidate_digest"`
-	State           string     `json:"state"`
-	Revision        int64      `json:"revision"`
-	Reason          string     `json:"reason,omitempty"`
-	DecidedBy       string     `json:"decided_by,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	DecidedAt       *time.Time `json:"decided_at,omitempty"`
+	NodeRunID       string              `json:"node_run_id,omitempty"`
+	ApproverIDs     []string            `json:"approver_ids,omitempty"`
+	Mode            string              `json:"mode,omitempty"`
+	Quorum          int                 `json:"quorum,omitempty"`
+	Votes           []GraphApprovalVote `json:"decisions,omitempty"`
+	Candidate       json.RawMessage     `json:"candidate,omitempty"`
+	ID              string              `json:"id"`
+	ApproverID      string              `json:"approver_id"`
+	CandidateDigest string              `json:"candidate_digest"`
+	State           string              `json:"state"`
+	Revision        int64               `json:"revision"`
+	Reason          string              `json:"reason,omitempty"`
+	DecidedBy       string              `json:"decided_by,omitempty"`
+	CreatedAt       time.Time           `json:"created_at"`
+	DecidedAt       *time.Time          `json:"decided_at,omitempty"`
+}
+
+type GraphScopeRecord struct {
+	ID              string          `json:"id"`
+	ParentNodeRunID string          `json:"parent_node_run_id,omitempty"`
+	DefinitionPath  string          `json:"definition_path"`
+	Iteration       int             `json:"iteration"`
+	Input           json.RawMessage `json:"input"`
+	Output          json.RawMessage `json:"output,omitempty"`
+	State           string          `json:"state"`
+}
+type GraphApprovalVote struct {
+	MemberID  string    `json:"member_id"`
+	UserID    string    `json:"user_id"`
+	Decision  string    `json:"decision"`
+	Reason    string    `json:"reason,omitempty"`
+	CreatedAt time.Time `json:"decided_at"`
+}
+type GraphEffectRecord struct {
+	InvocationID string            `json:"invocation_id"`
+	ClaimToken   string            `json:"claim_token"`
+	State        string            `json:"state"`
+	LeaseUntil   time.Time         `json:"lease_until"`
+	Attempts     int               `json:"attempts"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Body         json.RawMessage   `json:"body,omitempty"`
 }
 type GraphRunEvent struct {
 	ID        string    `json:"id"`
@@ -185,11 +238,12 @@ type GraphStartParams struct {
 	IdempotencyKey  string                 `json:"idempotency_key"`
 }
 type GraphControlParams struct {
-	ExpectedRevision int64  `json:"expected_revision"`
-	IdempotencyKey   string `json:"idempotency_key"`
-	NodeRunID        string `json:"node_run_id,omitempty"`
-	Reason           string `json:"reason,omitempty"`
-	ApproverID       string `json:"approver_id,omitempty"`
+	PreviousApproverID string `json:"previous_approver_id,omitempty"`
+	ExpectedRevision   int64  `json:"expected_revision"`
+	IdempotencyKey     string `json:"idempotency_key"`
+	NodeRunID          string `json:"node_run_id,omitempty"`
+	Reason             string `json:"reason,omitempty"`
+	ApproverID         string `json:"approver_id,omitempty"`
 }
 type GraphApprovalParams struct {
 	ExpectedRevision int64  `json:"expected_revision"`
@@ -350,7 +404,14 @@ func graphLoadVersion(ctx context.Context, tx pgx.Tx, ws, id string) (GraphVersi
 }
 func graphTerminal(state string) bool { return graph.IsTerminalRun(graph.RunState(state)) }
 func graphEvent(run *GraphRunRecord, kind, actor, message string) {
-	run.Events = append(run.Events, GraphRunEvent{ID: uuid.NewString(), Sequence: int64(len(run.Events) + 1), Type: kind, ActorID: actor, Message: message, CreatedAt: time.Now().UTC()})
+	sequence := int64(1)
+	if len(run.Events) > 0 {
+		sequence = run.Events[len(run.Events)-1].Sequence + 1
+	}
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	run.Events = append(run.Events, GraphRunEvent{ID: uuid.NewString(), Sequence: sequence, Type: kind, ActorID: actor, Message: message, CreatedAt: time.Now().UTC()})
 }
 func graphPersistRun(ctx context.Context, tx pgx.Tx, run *GraphRunRecord) error {
 	if _, err := tx.Exec(ctx, `SELECT set_config('multica.graph_run_id',$1,true)`, run.ID); err != nil {
@@ -358,6 +419,10 @@ func graphPersistRun(ctx context.Context, tx pgx.Tx, run *GraphRunRecord) error 
 	}
 	run.UpdatedAt = time.Now().UTC()
 	run.Revision++
+	events := run.Events
+	if run.SchemaVersion == 2 && len(run.Events) > 500 {
+		run.Events = run.Events[len(run.Events)-500:]
+	}
 	b, err := graphJSON(run)
 	if err != nil {
 		return err
@@ -384,7 +449,7 @@ func graphPersistRun(ctx context.Context, tx pgx.Tx, run *GraphRunRecord) error 
 			}
 		}
 	}
-	for _, event := range run.Events {
+	for _, event := range events {
 		eb, e := graphJSON(event)
 		if e != nil {
 			return e
@@ -393,7 +458,17 @@ func graphPersistRun(ctx context.Context, tx pgx.Tx, run *GraphRunRecord) error 
 			return err
 		}
 	}
-	if run.Approval != nil {
+	if run.SchemaVersion == 2 {
+		for _, approval := range run.Approvals {
+			ab, e := graphJSON(approval)
+			if e != nil {
+				return e
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO graph_approval(id,workspace_id,run_id,node_run_id,state,document) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET state=EXCLUDED.state,document=EXCLUDED.document`, approval.ID, run.WorkspaceID, run.ID, approval.NodeRunID, approval.State, ab); err != nil {
+				return err
+			}
+		}
+	} else if run.Approval != nil {
 		ab, e := graphJSON(run.Approval)
 		if e != nil {
 			return e
@@ -429,7 +504,7 @@ func graphNodeIssueStatus(state string) string {
 		return "blocked"
 	case "succeeded":
 		return "done"
-	case "cancelled":
+	case "cancelled", "skipped":
 		return "cancelled"
 	default:
 		return "todo"
@@ -440,17 +515,32 @@ func graphOperation(ctx context.Context, tx pgx.Tx, run GraphRunRecord, key, kin
 	return err
 }
 func graphFinish(run *GraphRunRecord, state, reason string) {
+	now := time.Now().UTC()
+	run.FinishedAt = &now
 	run.State = state
 	run.BlockReason = ""
 	run.TerminationReason = reason
+	for i := range run.Scopes {
+		if run.Scopes[i].State == "active" {
+			run.Scopes[i].State = state
+		}
+	}
 	for i := range run.Nodes {
 		n := &run.Nodes[i]
-		if n.State != "succeeded" && n.State != "rejected" && n.State != "failed" {
+		if n.State != "succeeded" && n.State != "rejected" && n.State != "failed" && n.State != "skipped" {
 			n.State = "cancelled"
+		}
+		if n.FinishedAt == nil {
+			n.FinishedAt = &now
 		}
 	}
 	if run.Approval != nil && run.Approval.State == "pending" {
 		run.Approval.State = "invalidated"
+	}
+	for i := range run.Approvals {
+		if run.Approvals[i].State == "pending" {
+			run.Approvals[i].State = "invalidated"
+		}
 	}
 	graphEvent(run, "run."+state, "", reason)
 }

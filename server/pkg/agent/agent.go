@@ -252,6 +252,7 @@ type Config struct {
 	// ReplaceEnvironment uses exactly Env rather than inheriting the daemon environment (Graph Codex adapter).
 	ReplaceEnvironment bool
 	GraphSkillPaths    []string
+	graphProcesses     *graphProcessScope
 	Logger             *slog.Logger
 	TaskID             string
 	RuntimeID          string
@@ -362,6 +363,21 @@ func ResumeRejectionUndetectable(agentType string) bool {
 }
 
 func New(agentType string, cfg Config) (Backend, error) {
+	if cfg.ReplaceEnvironment && agentType != "codex" && agentType != "claude" {
+		if err := validateGraphArguments(agentType, nil, cfg.LaunchPrefix); err != nil {
+			return nil, err
+		}
+		cfg.graphProcesses = &graphProcessScope{}
+		backend, err := newBackend(agentType, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return &graphProcessBackend{backend: backend, processes: cfg.graphProcesses, provider: agentType}, nil
+	}
+	return newBackend(agentType, cfg)
+}
+
+func newBackend(agentType string, cfg Config) (Backend, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}

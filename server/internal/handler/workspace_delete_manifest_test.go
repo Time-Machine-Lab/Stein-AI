@@ -72,6 +72,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"graph_run_event":                   workspaceDelete,
 	"graph_submission":                  workspaceDelete,
 	"graph_task_attempt":                workspaceDelete,
+	"graph_trigger":                     workspaceDelete,
+	"graph_trigger_event":               workspaceDelete,
 	"graph_version":                     workspaceDelete,
 	"inbox_item":                        workspaceDelete,
 	"issue":                             workspaceDelete,

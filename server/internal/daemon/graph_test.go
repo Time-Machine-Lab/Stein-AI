@@ -36,6 +36,21 @@ func graphTestTask(t *testing.T) Task {
 	return Task{ID: "task-1", AgentID: "agent-1", WorkspaceID: "workspace-1", IssueID: "issue-1", Graph: &manifest, GraphManifestHash: hash, Agent: &AgentData{ID: "agent-1", Name: "Builder", Instructions: "Frozen persona"}}
 }
 
+func TestGraphScopedArtifactRefsDoNotCollideAcrossIterations(t *testing.T) {
+	first := graphTestTask(t)
+	if got := graphManagedRef(first); got != "refs/heads/multica/graphs/run-1/build/1" {
+		t.Fatalf("legacy ref changed: %s", got)
+	}
+	first.Graph.NodeSpec.InstanceKey = "review/body/1/build"
+	one := graphManagedRef(first)
+	first.Graph.Identity.NodeRunID = "node-2"
+	first.Graph.NodeSpec.InstanceKey = "review/body/2/build"
+	two := graphManagedRef(first)
+	if one == two {
+		t.Fatal("iteration artifact refs collide")
+	}
+}
+
 func TestGraphCheckoutCannotChangeFixedRepositoryOrHideTaskIdentity(t *testing.T) {
 	root := t.TempDir()
 	work := filepath.Join(root, "workdir")
@@ -72,7 +87,7 @@ func TestGraphEnvironmentKeepsOnlyExplicitAuthAndPrivateHomes(t *testing.T) {
 	t.Setenv("CODEX_AMBIENT_CONFIG", "must-not-leak")
 	t.Setenv("OPENAI_API_KEY", "live-auth")
 	env := &execenv.Environment{RootDir: t.TempDir(), GraphHome: t.TempDir(), CodexHome: t.TempDir()}
-	got, err := graphExecutionEnvironment(env, map[string]string{"MULTICA_TOKEN": "task-token", "PATH": "bin", "EXPLICIT_API_KEY": "explicit-auth"}, map[string]string{"EXPLICIT_API_KEY": "explicit-auth"})
+	got, err := graphExecutionEnvironment("codex", env, map[string]string{"MULTICA_TOKEN": "task-token", "PATH": "bin", "EXPLICIT_API_KEY": "explicit-auth"}, map[string]string{"EXPLICIT_API_KEY": "explicit-auth"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +101,7 @@ func TestGraphEnvironmentKeepsOnlyExplicitAuthAndPrivateHomes(t *testing.T) {
 		t.Fatal("global skill roots are still visible")
 	}
 	for _, key := range []string{"HOME", "USERPROFILE", "CODEX_HOME", "XDG_CONFIG_HOME", "MULTICA_TOKEN", "NODE_OPTIONS", "CODEX_FEATURES"} {
-		if _, err := graphExecutionEnvironment(env, nil, map[string]string{key: "override"}); err == nil {
+		if _, err := graphExecutionEnvironment("codex", env, nil, map[string]string{key: "override"}); err == nil {
 			t.Errorf("unsafe custom env accepted: %s", key)
 		}
 	}
@@ -246,5 +261,37 @@ func TestGraphTerminalProtocolUsesOneExecutorIdentityAndDirectSubmission(t *test
 	d := Daemon{client: client}
 	if err := client.ReportGraphStopped(context.Background(), task.ID, d.graphStoppedReceipt(task, "success")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGraphEnvironmentCredentialsStayWithinSelectedProvider(t *testing.T) {
+	for _, key := range []string{"ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "COPILOT_GITHUB_TOKEN", "CURSOR_API_KEY", "KIRO_API_KEY", "OPENAI_API_KEY"} {
+		t.Setenv(key, "ambient-"+key)
+	}
+	for _, provider := range []string{"claude", "copilot", "script"} {
+		t.Run(provider, func(t *testing.T) {
+			env := &execenv.Environment{GraphHome: t.TempDir(), CodexHome: t.TempDir()}
+			got, err := graphExecutionEnvironment(provider, env, map[string]string{"EXPLICIT_SECRET": "authorized"}, map[string]string{"EXPLICIT_SECRET": "authorized"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowed := map[string]bool{}
+			if provider == "claude" {
+				allowed["ANTHROPIC_API_KEY"] = true
+			}
+			if provider == "copilot" {
+				for _, key := range []string{"GITHUB_TOKEN", "GH_TOKEN", "COPILOT_GITHUB_TOKEN"} {
+					allowed[key] = true
+				}
+			}
+			for _, key := range []string{"ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "COPILOT_GITHUB_TOKEN", "CURSOR_API_KEY", "KIRO_API_KEY", "OPENAI_API_KEY"} {
+				if (got[key] != "") != allowed[key] {
+					t.Errorf("%s credential present=%v want=%v", key, got[key] != "", allowed[key])
+				}
+			}
+			if got["EXPLICIT_SECRET"] != "authorized" {
+				t.Fatal("explicit authorized binding removed")
+			}
+		})
 	}
 }

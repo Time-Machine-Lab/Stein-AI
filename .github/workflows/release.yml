@@ -86,6 +86,11 @@ jobs:
       - name: Record Go toolchain
         run: go version
 
+      - name: Setup Node.js for native runtime fixtures
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - name: Verify Go test wrapper
         run: bash scripts/test-go.test.sh
 

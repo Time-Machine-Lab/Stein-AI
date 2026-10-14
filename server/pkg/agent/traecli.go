@@ -117,7 +117,7 @@ func (b *traecliBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = b.cfg.executionEnvironment()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -140,7 +140,7 @@ func (b *traecliBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 		return nil, fmt.Errorf("traecli stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := b.cfg.startExecution(cmd); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start traecli: %w", err)
 	}
@@ -252,7 +252,12 @@ func (b *traecliBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 		// Drop MCP entries whose remote transport the runtime didn't advertise
 		// (traecli advertises mcpCapabilities {http, sse}). See hermes.go for
 		// why sending an unsupported transport tanks the whole session/new.
+		frozenMCPCount := len(mcpServers)
 		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "traecli", b.cfg)
+		if b.cfg.ReplaceEnvironment && len(mcpServers) != frozenMCPCount {
+			resCh <- Result{Status: "failed", Error: "runtime cannot load every frozen Graph MCP transport"}
+			return
+		}
 
 		cwd := opts.Cwd
 		if cwd == "" {

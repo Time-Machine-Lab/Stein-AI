@@ -1158,6 +1158,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// purpose: the bearer token in the URL path IS the credential. Workspace
 	// context is derived from the trigger row, never from request headers.
 	r.Post("/api/webhooks/autopilots/{token}", h.HandleAutopilotWebhook)
+	r.Post("/api/graph-triggers/{triggerId}/invoke", h.InvokeGraphTrigger)
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
@@ -1552,13 +1553,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Assignee frequency
 			r.Get("/api/graphs", h.ListGraphs)
+			r.Get("/api/graphs/search", h.SearchGraphs)
+			r.Get("/api/graphs/start-options", h.GetGraphStartOptions)
+			r.Get("/api/graphs/repositories/{repositoryId}/commits", h.ListGraphRepositoryCommits)
 			r.Post("/api/graphs", h.CreateGraph)
+			r.Get("/api/graphs/generation-options", h.GetGraphGenerationOptions)
+			r.Post("/api/graphs/generate", h.GenerateGraph)
 			r.Get("/api/graphs/{graphId}", h.GetGraph)
 			r.Put("/api/graphs/{graphId}", h.UpdateGraph)
 			r.Post("/api/graphs/{graphId}/validate", h.ValidateGraph)
 			r.Post("/api/graphs/{graphId}/publish", h.PublishGraph)
 			r.Post("/api/graphs/{graphId}/archive", h.ArchiveGraph)
+			r.Get("/api/graphs/{graphId}/triggers", h.ListGraphTriggers)
+			r.Post("/api/graphs/{graphId}/triggers", h.SaveGraphTrigger)
+			r.Put("/api/graph-triggers/{triggerId}", h.SaveGraphTrigger)
+			r.Delete("/api/graph-triggers/{triggerId}", h.DeleteGraphTrigger)
+			r.Post("/api/graph-triggers/{triggerId}/rotate-secret", h.RotateGraphTriggerSecret)
+			r.Get("/api/graph-triggers/{triggerId}/events", h.ListGraphTriggerEvents)
 			r.Get("/api/graph-runs", h.ListGraphRuns)
+			r.Get("/api/graph-runs/search", h.SearchGraphRuns)
 			r.Post("/api/graph-runs", h.StartGraphRun)
 			r.Get("/api/graph-runs/{runId}", h.GetGraphRun)
 			r.Post("/api/graph-runs/{runId}/approval", h.ApproveGraphRun)

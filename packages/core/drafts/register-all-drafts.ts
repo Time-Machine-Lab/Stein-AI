@@ -20,3 +20,4 @@ import "../issues/stores/comment-draft-store";
 import "../projects/draft-store";
 import "../feedback/draft-store";
 import "../agents/manual-draft-store";
+import "../stores/graph-draft-store";

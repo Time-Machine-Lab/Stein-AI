@@ -31,6 +31,10 @@ func graphRefreshAttempts(ctx context.Context, tx pgx.Tx, run *GraphRunRecord) e
 		}
 		n.CanResolveBlock = run.ControlState == "run" && !graphTerminal(run.State) && graphRetryAllowed(*n) == nil
 		n.CanRetry = n.CanResolveBlock && len(n.Attempts) > 0
+		if run.SchemaVersion == 2 && n.NodeType == "http" {
+			n.CanRetry = run.ControlState == "run" && !graphTerminal(run.State) && n.State == "blocked" && n.Effect != nil && n.Effect.State != "dispatched" && n.Effect.Attempts < 3
+			n.CanResolveBlock = n.CanRetry
+		}
 	}
 	return nil
 }
@@ -151,10 +155,36 @@ func (s *GraphService) Submit(ctx context.Context, ws, taskID, key string, resul
 	if len(b) > 1024*1024 {
 		return record, graphError("output_invalid", "submission exceeds 1 MiB")
 	}
-	if len(node.Submissions) >= 100 {
+	submissionCount := len(node.Submissions)
+	if run.SchemaVersion == 2 {
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM graph_submission WHERE workspace_id=$1 AND run_id=$2 AND node_run_id=$3`, ws, runID, nodeID).Scan(&submissionCount); err != nil {
+			return record, err
+		}
+	}
+	if submissionCount >= 100 {
 		return record, graphError("submission_limit", "node submission limit exceeded")
 	}
 	record = GraphSubmissionRecord{ID: uuid.NewString(), TaskID: taskID, ContentHash: contentHash, Result: result, CreatedAt: time.Now().UTC()}
+	if run.SchemaVersion == 2 {
+		previous := node.Submissions
+		// Full submissions remain in graph_submission. The durable run document
+		// retains the latest proposal; receipts can load an earlier chosen one.
+		node.Submissions = []GraphSubmissionRecord{record}
+		if !graphPayloadFitsV2(run, len(result.Output)+65536) {
+			node.Submissions = previous
+			graphTerminateV2(&run, "failed", "storage_budget_exhausted")
+			if err = graphOperation(ctx, tx, run, "storage-budget:"+run.ID, "reconcile"); err != nil {
+				return record, err
+			}
+			if err = graphPersistRun(ctx, tx, &run); err != nil {
+				return record, err
+			}
+			if err = tx.Commit(ctx); err != nil {
+				return record, err
+			}
+			return GraphSubmissionRecord{}, graphError("storage_budget_exhausted", "run storage budget exhausted; active work is being stopped")
+		}
+	}
 	doc, err := graphJSON(record)
 	if err != nil {
 		return record, err
@@ -163,7 +193,9 @@ func (s *GraphService) Submit(ctx context.Context, ws, taskID, key string, resul
 	if err != nil {
 		return record, err
 	}
-	node.Submissions = append(node.Submissions, record)
+	if run.SchemaVersion != 2 {
+		node.Submissions = append(node.Submissions, record)
+	}
 	graphEvent(&run, "node.submitted", taskID, record.ID)
 	if err = graphPersistRun(ctx, tx, &run); err != nil {
 		return record, err

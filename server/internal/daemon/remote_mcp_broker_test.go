@@ -165,3 +165,16 @@ func TestDecodeRemoteMCPSSEData(t *testing.T) {
 		t.Fatalf("decodeRemoteMCPSSEData = %q, %v", raw, err)
 	}
 }
+
+func TestGraphAnonymousRemoteMCPRechecksRevokedGrantBeforeUpstream(t *testing.T) {
+	called := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer upstream.Close()
+	endpoint, _ := url.Parse(upstream.URL)
+	proxy := &remoteMCPProxy{endpoint: endpoint, client: upstream.Client(), path: "/capability", semaphore: make(chan struct{}, 1), revalidateGraphAuthorization: true, connection: pluginruntime.RemoteMCPConnection{ContributionID: "anonymous", ApprovedTools: []pluginruntime.RemoteMCPTool{{Name: "allowed"}}}, resolveCredential: func(context.Context, string) (http.Header, error) { return nil, errors.New("binding revoked") }}
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/capability", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"allowed"}}`)))
+	if called || !strings.Contains(recorder.Body.String(), "revoked or unavailable") {
+		t.Fatalf("anonymous Graph contribution bypassed live grant: called=%v response=%s", called, recorder.Body.String())
+	}
+}

@@ -232,9 +232,9 @@ func applyACPEffortOption(
 	sessionResult json.RawMessage,
 	level string,
 	stateIsCurrent bool,
-) {
+) bool {
 	if level == "" {
-		return
+		return true
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -251,7 +251,7 @@ func applyACPEffortOption(
 			"backend", backend,
 			"requested_level", level,
 		)
-		return
+		return false
 	}
 	if stateIsCurrent && !option.supports(level) {
 		// Sending an unadvertised token invites a hard error from the backend
@@ -265,7 +265,7 @@ func applyACPEffortOption(
 			"requested_level", level,
 			"advertised_levels", strings.Join(option.values(), ","),
 		)
-		return
+		return false
 	}
 
 	result, err := request(ctx, "session/set_config_option", map[string]any{
@@ -281,7 +281,7 @@ func applyACPEffortOption(
 			"effective_level", "unchanged",
 			"error", err,
 		)
-		return
+		return false
 	}
 
 	effectiveLevel, confirmed := acpConfigOptionCurrentValue(result, option.ConfigID)
@@ -295,11 +295,12 @@ func applyACPEffortOption(
 			"requested_level", level,
 			"effective_level", effectiveLevel,
 		)
-		return
+		return false
 	}
 	logger.Info("session reasoning effort confirmed",
 		"backend", backend,
 		"config_id", option.ConfigID,
 		"level", effectiveLevel,
 	)
+	return true
 }

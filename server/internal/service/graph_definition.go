@@ -214,39 +214,54 @@ func (s *GraphService) Publish(ctx context.Context, ws, user, id string, revisio
 	if err != nil {
 		return result, err
 	}
-	if err = json.Unmarshal(canonical, &draft.Definition); err != nil {
+	// Decode into a fresh value: unmarshalling over the draft would reuse its node
+	// slots, and canonical ordering can place a node where a differently configured
+	// one used to be, leaving stale optional config (e.g. a loop node with http).
+	var normalized graph.Definition
+	if err = json.Unmarshal(canonical, &normalized); err != nil {
 		return result, err
 	}
+	draft.Definition = normalized
 	if s.PrepareNode == nil {
 		return result, graphError("capability_missing", "Graph snapshot adapter is unavailable")
 	}
 	result = GraphVersionRecord{ID: uuid.NewString(), WorkspaceID: ws, GraphID: id, Definition: draft.Definition, Snapshots: map[string]GraphNodeSnapshot{}, CreatedAt: time.Now().UTC()}
-	for _, node := range draft.Definition.Nodes {
-		if string(node.Type) == "agent" {
+	err = graph.WalkNodes(draft.Definition, func(path string, node graph.Node) error {
+		if node.Type == graph.NodeTypeAgent || node.Type == graph.NodeTypeScript {
 			if err = graphUUIDs(node.AgentID); err != nil {
-				return result, err
+				return err
 			}
 			snapshot, e := s.PrepareNode(ctx, tx, ws, user, node)
 			if e != nil {
-				return result, e
+				return e
 			}
 			if e = graphValidateSnapshot(snapshot); e != nil {
-				return result, e
+				return e
 			}
-			result.Snapshots[node.Key] = snapshot
+			result.Snapshots[path] = snapshot
 		}
 		if string(node.Type) == "approval" {
-			if err = graphUUIDs(node.ApproverID); err != nil {
-				return result, err
+			members := []string{node.ApproverID}
+			if node.Approval != nil {
+				members = node.Approval.ApproverIDs
 			}
-			var found bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM member WHERE workspace_id=$1 AND id=$2)`, ws, node.ApproverID).Scan(&found); err != nil {
-				return result, err
-			}
-			if !found {
-				return result, graphError("approver_unavailable", "approval member does not exist in this workspace")
+			for _, member := range members {
+				if err = graphUUIDs(member); err != nil {
+					return err
+				}
+				var found bool
+				if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM member WHERE workspace_id=$1 AND id=$2)`, ws, member).Scan(&found); err != nil {
+					return err
+				}
+				if !found {
+					return graphError("approver_unavailable", "approval member does not exist in this workspace")
+				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return result, err
 	}
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(version),0)+1 FROM graph_version WHERE graph_id=$1`, id).Scan(&result.Version); err != nil {
 		return result, err

@@ -1,3 +1,6 @@
+import { GraphCommitsSchema, GraphGenerationOptionsSchema, GraphGenerationResultSchema, GraphListSchema, GraphRecordSchema, GraphRunListSchema, GraphRunSchema, GraphRunSearchSchema, GraphSearchSchema, GraphStartOptionsSchema, GraphTriggerEventsSchema, GraphTriggerListSchema, GraphTriggerSchema, GraphTriggerSecretSchema, GraphValidationSchema, GraphVersionSchema } from "@multica/core/graphs/schemas";
+import type { GraphApprovalRequest, GraphCommand, GraphCommitOption, GraphDefinition, GraphGenerationOptions, GraphGenerationRequest, GraphGenerationResult, GraphRecord, GraphRepositoryOption, GraphRun, GraphRunAction, GraphSearchParams, GraphSearchResult, GraphStartRequest, GraphTrigger, GraphTriggerWrite, GraphValidation, GraphVersion } from "@multica/core/graphs/types";
+import { definitionToWire, importGraphDefinition } from "@multica/core/graphs/definition";
 /**
  * Mobile-owned fetch wrapper. Mirrors the surface area of
  * packages/core/api/client.ts that mobile actually uses, but lives in
@@ -191,7 +194,7 @@ class ApiClient {
 
   private async fetch<T>(
     path: string,
-    init: RequestInit & { signal?: AbortSignal } = {},
+    init: RequestInit & { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<T> {
     const rid = createRequestId();
     const start = Date.now();
@@ -226,10 +229,11 @@ class ApiClient {
     //       facebook/react-native#35384). Without this, a refetch
     //       triggered by WS reconnect can leave the FlatList pull-to-refresh
     //       spinner stuck on the screen indefinitely.
+    const timeoutMs = init.timeoutMs ?? FETCH_TIMEOUT_MS;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-      controller.abort(new Error(`request timed out after ${FETCH_TIMEOUT_MS}ms`));
-    }, FETCH_TIMEOUT_MS);
+      controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
     const callerSignal = init.signal;
     const onCallerAbort = () => controller.abort(callerSignal?.reason);
     if (callerSignal) {
@@ -261,7 +265,7 @@ class ApiClient {
           duration: `${duration}ms`,
         });
         throw new ApiError(
-          `Request timed out after ${FETCH_TIMEOUT_MS}ms`,
+          `Request timed out after ${timeoutMs}ms`,
           0,
           undefined,
         );
@@ -359,6 +363,156 @@ class ApiClient {
     return parseWithFallback(raw, schema, fallback, {
       endpoint: opts?.endpoint ?? `${init.method ?? "GET"} ${path}`,
     });
+  }
+
+  async listGraphTriggerEvents(triggerId: string, opts?: { signal?: AbortSignal }): Promise<{ items: { id: string; state: string; runId?: string; error?: string; createdAt: string; updatedAt: string }[] }> {
+    return this.fetchValidated(`/api/graph-triggers/${encodeURIComponent(triggerId)}/events`, GraphTriggerEventsSchema, { items: [] }, { ...opts, endpoint: "GET /api/graph-triggers/:id/events" });
+  }
+  async listGraphTriggers(graphId: string, opts?: { signal?: AbortSignal }): Promise<{ items: GraphTrigger[] }> {
+    return this.fetchValidated(`/api/graphs/${encodeURIComponent(graphId)}/triggers`, GraphTriggerListSchema, { items: [] }, { ...opts, endpoint: "GET /api/graphs/:id/triggers" });
+  }
+  async saveGraphTrigger(graphId: string, request: GraphTriggerWrite, triggerId?: string): Promise<GraphTrigger> {
+    const body = { name: request.name, kind: request.kind, version_id: request.versionId, enabled: request.enabled, expected_revision: request.expectedRevision, idempotency_key: request.idempotencyKey,
+      config: { cron: request.config.cron, timezone: request.config.timezone, project_id: request.config.projectId, statuses: request.config.statuses, events: request.config.events, root_title: request.config.rootTitle, root_description: request.config.rootDescription },
+      input: request.input, runtime_bindings: request.runtimeBindings, repository: request.repository ? { repository_id: request.repository.repositoryId, base_sha: request.repository.baseSha, commit_sha: request.repository.commitSha, artifact_id: request.repository.artifactId } : undefined };
+    const raw = await this.fetch<unknown>(triggerId ? `/api/graph-triggers/${encodeURIComponent(triggerId)}` : `/api/graphs/${encodeURIComponent(graphId)}/triggers`, { method: triggerId ? "PUT" : "POST", body: JSON.stringify(body) });
+    const result = parseWithFallback<GraphTrigger | null>(raw, GraphTriggerSchema, null, { endpoint: "SAVE /api/graph-triggers" });
+    if (!result) throw new ApiError("Invalid trigger response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+  async deleteGraphTrigger(triggerId: string, command: GraphCommand): Promise<void> { await this.fetch<void>(`/api/graph-triggers/${encodeURIComponent(triggerId)}`, { method: "DELETE", body: JSON.stringify({ expected_revision: command.expectedRevision, idempotency_key: command.idempotencyKey }) }); }
+  async rotateGraphTriggerSecret(triggerId: string, command: GraphCommand): Promise<{ secret: string; webhookUrl: string }> {
+    const result = await this.fetchValidatedWith<{ secret: string; webhookUrl: string } | null>(`/api/graph-triggers/${encodeURIComponent(triggerId)}/rotate-secret`, GraphTriggerSecretSchema, null, { method: "POST", body: JSON.stringify({ expected_revision: command.expectedRevision, idempotency_key: command.idempotencyKey }) });
+    if (!result) throw new ApiError("Invalid webhook secret response.", 502, "Invalid response");
+    return result;
+  }
+  async searchGraphs(params: GraphSearchParams = {}, opts?: { signal?: AbortSignal }): Promise<GraphSearchResult<GraphRecord>> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== "") query.set(key === "graphId" ? "graph_id" : key, String(value));
+    return this.fetchValidated(`/api/graphs/search?${query}`, GraphSearchSchema, { items: [], total: 0 }, { ...opts, endpoint: "GET /api/graphs/search" });
+  }
+  async searchGraphRuns(params: GraphSearchParams = {}, opts?: { signal?: AbortSignal }): Promise<GraphSearchResult<GraphRun>> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== "") query.set(key === "graphId" ? "graph_id" : key, String(value));
+    return this.fetchValidated(`/api/graph-runs/search?${query}`, GraphRunSearchSchema, { items: [], total: 0 }, { ...opts, endpoint: "GET /api/graph-runs/search" });
+  }
+  async graphStartOptions(rootIssueId?: string, opts?: { signal?: AbortSignal }): Promise<{ repositories: GraphRepositoryOption[] }> {
+    return this.fetchValidated(`/api/graphs/start-options${rootIssueId ? `?root_issue_id=${encodeURIComponent(rootIssueId)}` : ""}`, GraphStartOptionsSchema, { repositories: [] }, { ...opts, endpoint: "GET /api/graphs/start-options" });
+  }
+  async graphRepositoryCommits(repositoryId: string, params: { q?: string; ref?: string; cursor?: string } = {}, opts?: { signal?: AbortSignal }): Promise<{ commits: GraphCommitOption[]; nextCursor?: string }> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
+    return this.fetchValidated(`/api/graphs/repositories/${encodeURIComponent(repositoryId)}/commits?${query}`, GraphCommitsSchema, { commits: [] }, { ...opts, endpoint: "GET /api/graphs/repositories/:id/commits" });
+  }
+  async getGraphGenerationOptions(opts?: { signal?: AbortSignal }): Promise<GraphGenerationOptions> {
+    return parseWithFallback<GraphGenerationOptions>(
+      await this.fetch<unknown>("/api/graphs/generation-options", { signal: opts?.signal }), GraphGenerationOptionsSchema,
+      { enabled: false }, { endpoint: "GET /api/graphs/generation-options" },
+    );
+  }
+
+  async generateGraph(request: GraphGenerationRequest): Promise<GraphGenerationResult> {
+    const raw = await this.fetch<unknown>("/api/graphs/generate", {
+      timeoutMs: 180_000, method: "POST", body: JSON.stringify({ prompt: request.prompt, agent_id: request.agentId, approver_id: request.approverId, ...(request.currentDefinition ? { current_definition: definitionToWire(request.currentDefinition) } : {}), ...(request.messages ? { messages: request.messages } : {}) }),
+    });
+    const result = parseWithFallback<GraphGenerationResult | null>(raw, GraphGenerationResultSchema, null, { endpoint: "POST /api/graphs/generate" });
+    if (!result || !raw || typeof raw !== "object" || !("definition" in raw)) throw new ApiError("Invalid Graph generation response. Your draft has not changed.", 502, "Invalid response");
+    // Generated drafts must belong to the editor's supported schema versions.
+    // A newer backend must not silently replace a draft with an uneditable graph.
+    try {
+      return { definition: importGraphDefinition(JSON.stringify(raw.definition)), ...(result.summary ? { summary: result.summary } : {}) };
+    } catch {
+      throw new ApiError("Invalid Graph generation response. Your draft has not changed.", 502, "Invalid response");
+    }
+  }
+
+  async listGraphs(opts?: { signal?: AbortSignal }): Promise<GraphRecord[]> {
+    return this.fetchValidated("/api/graphs", GraphListSchema, [] as GraphRecord[], { ...opts, endpoint: "GET /api/graphs" });
+  }
+
+  async getGraph(id: string, opts?: { signal?: AbortSignal }): Promise<GraphRecord | null> {
+    return this.fetchValidated<GraphRecord | null>(`/api/graphs/${encodeURIComponent(id)}`, GraphRecordSchema, null, { ...opts, endpoint: "GET /api/graphs/:id" });
+  }
+
+  async saveGraph(definition: GraphDefinition, command?: { id: string; expectedRevision: number }, idempotencyKey?: string): Promise<GraphRecord> {
+    const raw = await this.fetch<unknown>(command ? `/api/graphs/${encodeURIComponent(command.id)}` : "/api/graphs", {
+      method: command ? "PUT" : "POST",
+      body: JSON.stringify({ definition: definitionToWire(definition), expected_revision: command?.expectedRevision, idempotency_key: idempotencyKey }),
+    });
+    const result = parseWithFallback<GraphRecord | null>(raw, GraphRecordSchema, null, { endpoint: "SAVE /api/graphs" });
+    if (!result) throw new ApiError("Invalid Graph response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+
+  async validateGraph(id: string): Promise<GraphValidation> {
+    const raw = await this.fetch<unknown>(`/api/graphs/${encodeURIComponent(id)}/validate`, { method: "POST", body: "{}" });
+    return parseWithFallback<GraphValidation>(raw, GraphValidationSchema, { valid: false, diagnostics: [{ code: "invalid_response", message: "Unable to read validation response." }] }, { endpoint: "POST /api/graphs/:id/validate" });
+  }
+
+  async publishGraph(id: string, command: GraphCommand): Promise<GraphVersion> {
+    const raw = await this.fetch<unknown>(`/api/graphs/${encodeURIComponent(id)}/publish`, {
+      method: "POST", body: JSON.stringify({ expected_revision: command.expectedRevision, idempotency_key: command.idempotencyKey }),
+    });
+    const result = parseWithFallback<GraphVersion | null>(raw, GraphVersionSchema, null, { endpoint: "POST /api/graphs/:id/publish" });
+    if (!result) throw new ApiError("Invalid publication response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+
+  async listGraphRuns(opts?: { signal?: AbortSignal }): Promise<GraphRun[]> {
+    return this.fetchValidated("/api/graph-runs", GraphRunListSchema, [] as GraphRun[], { ...opts, endpoint: "GET /api/graph-runs" });
+  }
+
+  async getGraphRun(id: string, opts?: { signal?: AbortSignal }): Promise<GraphRun | null> {
+    return this.fetchValidated<GraphRun | null>(`/api/graph-runs/${encodeURIComponent(id)}`, GraphRunSchema, null, { ...opts, endpoint: "GET /api/graph-runs/:id" });
+  }
+
+  async startGraphRun(request: GraphStartRequest): Promise<GraphRun> {
+    const raw = await this.fetch<unknown>("/api/graph-runs", { method: "POST", body: JSON.stringify({
+      version_id: request.versionId, root_issue_id: request.rootIssueId, input: request.input,
+      runtime_bindings: request.runtimeBindings, deadline: request.deadline, idempotency_key: request.idempotencyKey,
+      previous_run_id: request.previousRunId,
+      repository: request.repository ? { repository_id: request.repository.repositoryId, base_sha: request.repository.baseSha, commit_sha: request.repository.commitSha, artifact_id: request.repository.artifactId } : undefined,
+    }) });
+    const result = parseWithFallback<GraphRun | null>(raw, GraphRunSchema, null, { endpoint: "POST /api/graph-runs" });
+    if (!result) throw new ApiError("Invalid run response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+
+  async controlGraphRun(id: string, action: GraphRunAction, command: GraphCommand): Promise<GraphRun> {
+    const raw = await this.fetch<unknown>(`/api/graph-runs/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify({
+      expected_revision: command.expectedRevision, idempotency_key: command.idempotencyKey, node_run_id: command.nodeRunId, reason: command.reason,
+    }) });
+    const result = parseWithFallback<GraphRun | null>(raw, GraphRunSchema, null, { endpoint: `POST /api/graph-runs/:id/${action}` });
+    if (!result) throw new ApiError("Invalid run response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+
+  async approveGraphRun(id: string, request: GraphApprovalRequest): Promise<GraphRun> {
+    const raw = await this.fetch<unknown>(`/api/graph-runs/${encodeURIComponent(id)}/approval`, { method: "POST", body: JSON.stringify({
+      expected_revision: request.expectedRevision, idempotency_key: request.idempotencyKey,
+      approval_id: request.approvalId, candidate_digest: request.candidateDigest, decision: request.decision, reason: request.reason,
+    }) });
+    const result = parseWithFallback<GraphRun | null>(raw, GraphRunSchema, null, { endpoint: "POST /api/graph-runs/:id/approval" });
+    if (!result) throw new ApiError("Invalid approval response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+
+  async archiveGraph(id: string, command: GraphCommand): Promise<GraphRecord> {
+    const raw = await this.fetch<unknown>(`/api/graphs/${encodeURIComponent(id)}/archive`, { method: "POST", body: JSON.stringify({ expected_revision: command.expectedRevision, idempotency_key: command.idempotencyKey }) });
+    const result = parseWithFallback<GraphRecord | null>(raw, GraphRecordSchema, null, { endpoint: "POST /api/graphs/:id/archive" });
+    if (!result) throw new ApiError("Invalid Graph response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+
+  async replaceGraphApprover(id: string, command: GraphCommand & { approverId: string; previousApproverId?: string }): Promise<GraphRun> {
+    const raw = await this.fetch<unknown>(`/api/graph-runs/${encodeURIComponent(id)}/approver`, { method: "POST", body: JSON.stringify({ expected_revision: command.expectedRevision, idempotency_key: command.idempotencyKey, approver_id: command.approverId, node_run_id: command.nodeRunId, previous_approver_id: command.previousApproverId, reason: command.reason }) });
+    const result = parseWithFallback<GraphRun | null>(raw, GraphRunSchema, null, { endpoint: "POST /api/graph-runs/:id/approver" });
+    if (!result) throw new ApiError("Invalid run response. Refresh before trying again.", 502, "Invalid response");
+    return result;
+  }
+
+  async detachGraphIssue(issueId: string, idempotencyKey: string): Promise<void> {
+    await this.fetch<void>(`/api/issues/${encodeURIComponent(issueId)}/graph-detach`, { method: "POST", body: JSON.stringify({ idempotency_key: idempotencyKey }) });
   }
 
   // --- Auth ---

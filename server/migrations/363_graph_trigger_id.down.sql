@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS graph_trigger_id_idx;

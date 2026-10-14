@@ -12,12 +12,16 @@ import (
 )
 
 func decodeJSON(data []byte, limit int) (any, error) {
+	return decodeJSONWithDepth(data, limit, MaxDepth)
+}
+
+func decodeJSONWithDepth(data []byte, limit, maxDepth int) (any, error) {
 	if len(data) == 0 || len(data) > limit {
 		return nil, invalid("json", "empty value or size limit exceeded")
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
-	v, err := decodeValue(d, 0)
+	v, err := decodeValue(d, 0, maxDepth)
 	if err != nil {
 		return nil, invalid("json", err.Error())
 	}
@@ -27,9 +31,9 @@ func decodeJSON(data []byte, limit int) (any, error) {
 	return v, nil
 }
 
-func decodeValue(d *json.Decoder, depth int) (any, error) {
-	if depth > MaxDepth {
-		return nil, fmt.Errorf("nesting exceeds %d", MaxDepth)
+func decodeValue(d *json.Decoder, depth, maxDepth int) (any, error) {
+	if depth > maxDepth {
+		return nil, fmt.Errorf("nesting exceeds %d", maxDepth)
 	}
 	t, err := d.Token()
 	if err != nil {
@@ -52,7 +56,7 @@ func decodeValue(d *json.Decoder, depth int) (any, error) {
 				if _, ok := m[k]; ok {
 					return nil, fmt.Errorf("duplicate object field %q", k)
 				}
-				value, err := decodeValue(d, depth+1)
+				value, err := decodeValue(d, depth+1, maxDepth)
 				if err != nil {
 					return nil, err
 				}
@@ -65,7 +69,7 @@ func decodeValue(d *json.Decoder, depth int) (any, error) {
 		case '[':
 			a := []any{}
 			for d.More() {
-				value, err := decodeValue(d, depth+1)
+				value, err := decodeValue(d, depth+1, maxDepth)
 				if err != nil {
 					return nil, err
 				}
