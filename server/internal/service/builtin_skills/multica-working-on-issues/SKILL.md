@@ -41,7 +41,8 @@ is a nonempty diagnostics object, for example
 the repository checkout. An unchanged result reuses a stable idempotency key.
 
 For `produce_commit`, commit locally and declare the exact `git_commit` artifact
-described in the execution manifest and prompt; the daemon verifies and pushes
+described in the execution manifest and prompt, with a freshly generated UUID as
+its `id` (never the commit SHA); the daemon verifies and pushes
 the managed ref after execution stops. For `verify_commit`, keep HEAD at the
 frozen candidate, leave the checkout clean and return its `tested_commit_sha`.
 Do not replace structured submission with a comment, PR, exit code or a manual

@@ -18,7 +18,8 @@
 - `server/internal/daemon/graph.go`: `buildGraphPrompt`, `finalizeGraphGit` and
   `finalizeGraphTask` define structured delivery and stopped receipts.
 - `server/internal/graph/result.go`: `ValidateResult` enforces execution-mode
-  artifacts, output schema, diagnostics and the tested candidate SHA.
+  artifacts (artifact ids must be UUIDs), output schema, diagnostics and the
+  tested candidate SHA.
 
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`

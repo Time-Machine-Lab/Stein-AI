@@ -33,6 +33,10 @@ type ClientIdentity struct {
 	// Capabilities is the raw X-Client-Capabilities header captured at connect,
 	// so RPC handlers can honor the same capability gating as the HTTP path.
 	Capabilities string
+	// InstanceID is the X-Daemon-Instance-ID header captured at connect. Graph
+	// claims bind an attempt to this process identity, so the WS claim path must
+	// forward it exactly as the HTTP path does.
+	InstanceID string
 }
 
 // AuthorizedWorkspaceIDs returns the connection's workspace scope in stable
