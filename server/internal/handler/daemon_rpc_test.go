@@ -72,3 +72,38 @@ func TestDaemonRPCHandler_UnknownMethod(t *testing.T) {
 		t.Fatalf("status=%d err=%v, want 404 + error", status, err)
 	}
 }
+
+// TestNewRPCClaimRequestForwardsConnectionIdentity pins that the synthetic claim
+// request carries every header the HTTP claim path reads. A Graph attempt binds
+// to the daemon process identity; without X-Daemon-Instance-ID the claim is
+// refused and the task is requeued in a loop.
+func TestNewRPCClaimRequestForwardsConnectionIdentity(t *testing.T) {
+	identity := daemonws.ClientIdentity{
+		UserID:        "user-1",
+		Capabilities:  "graph-execution-v1,graph-execution-v2",
+		ClientVersion: "1.2.3",
+		InstanceID:    "6a1f6f0c-8f0b-4a37-8a0e-0a1d3f1d2b11",
+	}
+	req, err := newRPCClaimRequest(context.Background(), identity, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for header, want := range map[string]string{
+		"X-User-ID":             identity.UserID,
+		"X-Client-Capabilities": identity.Capabilities,
+		"X-Client-Version":      identity.ClientVersion,
+		"X-Daemon-Instance-ID":  identity.InstanceID,
+	} {
+		if got := req.Header.Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+
+	bare, err := newRPCClaimRequest(context.Background(), daemonws.ClientIdentity{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bare.Header.Get("X-Daemon-Instance-ID"); got != "" {
+		t.Errorf("empty identity must not invent an instance id, got %q", got)
+	}
+}
