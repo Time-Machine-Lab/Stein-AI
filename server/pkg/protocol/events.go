@@ -127,6 +127,10 @@ const (
 	EventAutopilotRunStart = "autopilot:run_start"
 	EventAutopilotRunDone  = "autopilot:run_done"
 
+	// Graph events. The generation event is an invalidation hint for the AI
+	// authoring flow; the payload names the generation, never its content.
+	EventGraphGenerationUpdated = "graph:generation_updated"
+
 	// Squad events
 	EventSquadCreated = "squad:created"
 	EventSquadUpdated = "squad:updated"

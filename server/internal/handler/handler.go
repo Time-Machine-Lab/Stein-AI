@@ -165,6 +165,7 @@ type Handler struct {
 	Bus                    *events.Bus
 	TaskService            *service.TaskService
 	GraphService           *service.GraphService
+	GraphGeneration        *service.GraphGenerationService
 	PluginService          *service.PluginService
 	IssueService           *service.IssueService
 	AutopilotService       *service.AutopilotService
@@ -420,6 +421,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	h.GraphService = service.NewGraphService(queries, txStarter)
+	if executor != nil {
+		h.GraphGeneration = service.NewGraphGenerationService(queries, txStarter, executor, taskSvc, bus)
+	}
 	h.TaskService.Graph = h.GraphService
 	h.GraphService.PrepareNode = h.prepareGraphNode
 	h.GraphService.PrepareRun = h.prepareGraphRun

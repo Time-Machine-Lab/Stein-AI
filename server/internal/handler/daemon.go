@@ -2869,6 +2869,33 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 	}
 
+	// Graph authoring task: issue-less like quick-create, but the request lives
+	// in graph_generation and the agent reads it through the CLI, so the claim
+	// only names the kind. No repositories, project or squad context is attached:
+	// the agent drafts a definition in an empty working directory.
+	hasGraphAuthoring := false
+	if authoring, ok := service.ParseGraphAuthoringContext(*task); ok {
+		hasGraphAuthoring = true
+		// An older daemon would run this task as an issue-less assignment with
+		// no instructions at all. Fail it instead, with a reason the requester
+		// can act on.
+		if !requestHasClientCapability(r, protocol.DaemonCapabilityGraphAuthoringV1) {
+			failure := h.failClaimedTaskBeforeLaunch(
+				r.Context(),
+				task,
+				"This task could not start because the agent's runtime does not support AI Graph authoring. Update the Multica CLI on that machine, then try again.",
+				taskfailure.ReasonAgentRuntimeVersionUnsupported,
+				"error_graph_authoring_runtime_incompatible",
+				http.StatusConflict,
+				"runtime does not support Graph authoring tasks",
+			)
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
+		}
+		resp.GraphAuthoring = true
+		resp.WorkspaceID = authoring.WorkspaceID
+		resp.ThreadName = "Graph authoring"
+	}
+
 	// Workspace isolation check: the daemon uses this response's workspace_id
 	// as the only authority for MULTICA_WORKSPACE_ID in the agent env. An
 	// empty value would make the CLI silently fall back to the user-global
@@ -2887,6 +2914,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			"has_chat", task.ChatSessionID.Valid,
 			"has_autopilot_run", task.AutopilotRunID.Valid,
 			"has_quick_create", hasQuickCreate,
+			"has_graph_authoring", hasGraphAuthoring,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",

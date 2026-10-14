@@ -9,6 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/graph"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type graphAuthoringActors struct {
@@ -43,81 +44,10 @@ func (h *Handler) graphAuthoringContext(ctx context.Context, ws, user string, re
 	}
 	var current *graph.Definition
 	if req.CurrentDefinition != nil {
-		raw, err := json.Marshal(req.CurrentDefinition)
-		if err != nil || len(raw) > graph.MaxDefinitionBytes {
-			return "", actors, &service.GraphError{Code: "invalid_request", Message: "current graph exceeds authoring limits"}
-		}
-		if _, _, err = graph.CanonicalJSON(raw); err != nil {
-			return "", actors, &service.GraphError{Code: "invalid_request", Message: "invalid current graph"}
-		}
-		current = &graph.Definition{}
-		if err = json.Unmarshal(raw, current); err != nil {
-			return "", actors, err
-		}
-		agentAliases := map[string]string{req.AgentID: "agent_default"}
-		approverAliases := map[string]string{req.ApproverID: "approver_default"}
-		addAgent := func(id string) error {
-			if id == "" {
-				return nil
-			}
-			if _, ok := agentAliases[id]; ok {
-				return nil
-			}
-			parsed, err := util.ParseUUID(id)
-			if err != nil {
-				return &service.GraphError{Code: "invalid_request", Message: "invalid graph agent"}
-			}
-			agent, err := h.Queries.GetAgent(ctx, parsed)
-			if err != nil || uuidToString(agent.WorkspaceID) != ws || agent.ArchivedAt.Valid || !h.canInvokeAgent(ctx, agent, "member", user, user, ws) {
-				return &service.GraphError{Code: "forbidden", Message: "current graph contains an unavailable agent"}
-			}
-			alias := fmt.Sprintf("agent_%d", len(actors.Agents))
-			agentAliases[id] = alias
-			actors.Agents[alias] = id
-			return nil
-		}
-		addApprover := func(id string) error {
-			if id == "" {
-				return nil
-			}
-			if _, ok := approverAliases[id]; ok {
-				return nil
-			}
-			parsed, err := util.ParseUUID(id)
-			if err != nil {
-				return &service.GraphError{Code: "invalid_request", Message: "invalid graph approver"}
-			}
-			member, err := h.Queries.GetMember(ctx, parsed)
-			if err != nil || uuidToString(member.WorkspaceID) != ws {
-				return &service.GraphError{Code: "forbidden", Message: "current graph contains an unavailable approver"}
-			}
-			alias := fmt.Sprintf("approver_%d", len(actors.Approvers))
-			approverAliases[id] = alias
-			actors.Approvers[alias] = id
-			return nil
-		}
-		if err = walkGraphAuthoringDraft(*current, func(node graph.Node) error {
-			if err := addAgent(node.AgentID); err != nil {
-				return err
-			}
-			if err := addApprover(node.ApproverID); err != nil {
-				return err
-			}
-			if node.Approval != nil {
-				for _, id := range node.Approval.ApproverIDs {
-					if err := addApprover(id); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		}); err != nil {
-			return "", actors, err
-		}
-		// Empty actor fields in an unfinished local draft use the selected defaults.
-		agentAliases[""] = "agent_default"
-		approverAliases[""] = "approver_default"
-		if err = graphTransformActors(current, agentAliases, approverAliases); err != nil {
+		var err error
+		current, err = h.graphAuthoringCurrent(ctx, ws, user, req.CurrentDefinition, &actors,
+			map[string]string{req.AgentID: "agent_default"}, map[string]string{req.ApproverID: "approver_default"}, nil)
+		if err != nil {
 			return "", actors, err
 		}
 	}
@@ -127,6 +57,93 @@ func (h *Handler) graphAuthoringContext(ctx context.Context, ws, user string, re
 		Messages []graphAuthoringMessage `json:"messages,omitempty"`
 	}{req.Prompt, current, req.Messages})
 	return string(raw), actors, err
+}
+
+// graphAuthoringCurrent replaces the actors of the requester's current draft
+// with aliases. agentAliases and approverAliases map workspace IDs to aliases
+// the caller already assigned; every other actor the draft uses must be
+// available to the requester and receives the next alias, which is recorded in
+// actors. onAgent, when set, sees each agent that was aliased this way.
+func (h *Handler) graphAuthoringCurrent(ctx context.Context, ws, user string, definition *graph.Definition, actors *graphAuthoringActors, agentAliases, approverAliases map[string]string, onAgent func(alias string, agent db.Agent)) (*graph.Definition, error) {
+	raw, err := json.Marshal(definition)
+	if err != nil || len(raw) > graph.MaxDefinitionBytes {
+		return nil, &service.GraphError{Code: "invalid_request", Message: "current graph exceeds authoring limits"}
+	}
+	if _, _, err = graph.CanonicalJSON(raw); err != nil {
+		return nil, &service.GraphError{Code: "invalid_request", Message: "invalid current graph"}
+	}
+	current := &graph.Definition{}
+	if err = json.Unmarshal(raw, current); err != nil {
+		return nil, err
+	}
+	addAgent := func(id string) error {
+		if id == "" {
+			return nil
+		}
+		if _, ok := agentAliases[id]; ok {
+			return nil
+		}
+		parsed, err := util.ParseUUID(id)
+		if err != nil {
+			return &service.GraphError{Code: "invalid_request", Message: "invalid graph agent"}
+		}
+		agent, err := h.Queries.GetAgent(ctx, parsed)
+		if err != nil || uuidToString(agent.WorkspaceID) != ws || agent.ArchivedAt.Valid || !h.canInvokeAgent(ctx, agent, "member", user, user, ws) {
+			return &service.GraphError{Code: "forbidden", Message: "current graph contains an unavailable agent"}
+		}
+		alias := fmt.Sprintf("agent_%d", len(actors.Agents))
+		agentAliases[id] = alias
+		actors.Agents[alias] = id
+		if onAgent != nil {
+			onAgent(alias, agent)
+		}
+		return nil
+	}
+	addApprover := func(id string) error {
+		if id == "" {
+			return nil
+		}
+		if _, ok := approverAliases[id]; ok {
+			return nil
+		}
+		parsed, err := util.ParseUUID(id)
+		if err != nil {
+			return &service.GraphError{Code: "invalid_request", Message: "invalid graph approver"}
+		}
+		member, err := h.Queries.GetMember(ctx, parsed)
+		if err != nil || uuidToString(member.WorkspaceID) != ws {
+			return &service.GraphError{Code: "forbidden", Message: "current graph contains an unavailable approver"}
+		}
+		alias := fmt.Sprintf("approver_%d", len(actors.Approvers))
+		approverAliases[id] = alias
+		actors.Approvers[alias] = id
+		return nil
+	}
+	if err = walkGraphAuthoringDraft(*current, func(node graph.Node) error {
+		if err := addAgent(node.AgentID); err != nil {
+			return err
+		}
+		if err := addApprover(node.ApproverID); err != nil {
+			return err
+		}
+		if node.Approval != nil {
+			for _, id := range node.Approval.ApproverIDs {
+				if err := addApprover(id); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	// Empty actor fields in an unfinished local draft use the selected defaults.
+	agentAliases[""] = "agent_default"
+	approverAliases[""] = "approver_default"
+	if err = graphTransformActors(current, agentAliases, approverAliases); err != nil {
+		return nil, err
+	}
+	return current, nil
 }
 
 // Drafts may have missing actors, incomplete bindings, or disconnected nodes.

@@ -442,7 +442,8 @@ func (d *Daemon) shouldCleanTaskDirForKind(ctx context.Context, taskDir string, 
 		return d.gcDecisionChat(ctx, taskDir, meta)
 	case execenv.GCKindAutopilotRun:
 		return d.gcDecisionAutopilotRun(ctx, taskDir, meta)
-	case execenv.GCKindQuickCreate:
+	case execenv.GCKindQuickCreate, execenv.GCKindGraphAuthoring:
+		// Both are keyed on their own task row, so one decision serves them.
 		return d.gcDecisionQuickCreate(ctx, taskDir, meta)
 	default:
 		// Unknown kind: fall back to mtime-based orphan cleanup so a future

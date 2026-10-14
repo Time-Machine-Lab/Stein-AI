@@ -132,6 +132,7 @@ type Task struct {
 	QuickCreatePriority           string                 `json:"quick_create_priority,omitempty"`            // explicit priority selected in quick-create
 	QuickCreateDueDate            string                 `json:"quick_create_due_date,omitempty"`            // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs      []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
+	GraphAuthoring                bool                   `json:"graph_authoring,omitempty"`                  // true for AI Graph authoring tasks: draft a definition and submit it with `multica graph draft`; the request itself is read through `multica graph draft context`
 	HandoffNote                   string                 `json:"handoff_note,omitempty"`                     // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader

@@ -99,7 +99,13 @@ func (h *Handler) GetGraphGenerationOptions(w http.ResponseWriter, r *http.Reque
 	if _, ok = h.workspaceMember(w, r, ws); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"enabled": h.LLM != nil && h.LLM.Enabled() && h.graphGeneration != nil})
+	// enabled reports the legacy server-model path; runtime_enabled is present
+	// only when this server can serve authoring requests through runtime agents.
+	options := map[string]bool{"enabled": h.LLM != nil && h.LLM.Enabled() && h.graphGeneration != nil}
+	if h.GraphGeneration != nil {
+		options["runtime_enabled"] = true
+	}
+	writeJSON(w, http.StatusOK, options)
 }
 
 func (h *Handler) GenerateGraph(w http.ResponseWriter, r *http.Request) {
@@ -172,20 +178,9 @@ func (h *Handler) GenerateGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Reuse publication eligibility checks (including model/config/plugin
-	// constraints). Release the read transaction before the upstream request.
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
+	// constraints). The read transaction is released before the upstream request.
+	if err = h.graphAgentEligible(ctx, ws, user, agent); err != nil {
 		writeGraphError(w, err)
-		return
-	}
-	_, err = h.prepareGraphNode(ctx, tx, ws, user, graph.Node{Type: graph.NodeTypeAgent, AgentID: uuidToString(agent.ID)})
-	rollbackErr := tx.Rollback(ctx)
-	if err != nil {
-		writeGraphError(w, err)
-		return
-	}
-	if rollbackErr != nil {
-		writeGraphError(w, rollbackErr)
 		return
 	}
 	contextText, actors, err := h.graphAuthoringContext(ctx, ws, user, req)

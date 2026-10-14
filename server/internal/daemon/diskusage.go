@@ -347,7 +347,7 @@ func parentIDForMeta(meta *execenv.GCMeta) string {
 		return strings.TrimSpace(meta.ChatSessionID)
 	case execenv.GCKindAutopilotRun:
 		return strings.TrimSpace(meta.AutopilotRunID)
-	case execenv.GCKindQuickCreate:
+	case execenv.GCKindQuickCreate, execenv.GCKindGraphAuthoring:
 		return strings.TrimSpace(meta.TaskID)
 	default:
 		return ""

@@ -5250,7 +5250,9 @@ func (s *TaskService) notifyRuntimeMayHaveWork(runtimeID pgtype.UUID, taskID str
 
 func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTaskQueue) {
 	var payload map[string]any
-	if task.Context != nil {
+	// Graph authoring tasks only identify their request in context; the event
+	// reaches every workspace member, so it never carries that context.
+	if task.Context != nil && !IsGraphAuthoringTask(task) {
 		json.Unmarshal(task.Context, &payload)
 	}
 	if payload == nil {
@@ -5278,6 +5280,7 @@ func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTa
 		ActorID:     "",
 		Payload:     payload,
 	})
+	s.publishGraphGenerationUpdate(workspaceID, task)
 }
 
 // taskEvent builds the shared task-lifecycle event contract. Scope hints are
@@ -5317,6 +5320,7 @@ func (s *TaskService) publishTaskEvent(eventType, workspaceID string, task db.Ag
 		return
 	}
 	s.Bus.Publish(taskEvent(eventType, workspaceID, task, extra...))
+	s.publishGraphGenerationUpdate(workspaceID, task)
 }
 
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue, extra ...map[string]any) {
@@ -5378,6 +5382,11 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	// broadcasts, which is why quick-create tasks appeared stuck queued.
 	if qc, ok := s.parseQuickCreateContext(task); ok {
 		return qc.WorkspaceID
+	}
+	// Graph authoring tasks are issue-less like quick-create, so the daemon
+	// access checks and lifecycle events resolve their workspace the same way.
+	if gc, ok := ParseGraphAuthoringContext(task); ok {
+		return gc.WorkspaceID
 	}
 	return ""
 }

@@ -3,8 +3,15 @@ package protocol
 import "encoding/json"
 
 const (
-	DaemonCapabilityGraphExecutionV1    = "graph-execution-v1"
-	CLICapabilityGraphNodeSubmitV1      = "graph-node-submit-v1"
+	DaemonCapabilityGraphExecutionV1 = "graph-execution-v1"
+	CLICapabilityGraphNodeSubmitV1   = "graph-node-submit-v1"
+	// Graph authoring tasks ask a runtime agent to draft a Graph definition and
+	// submit it through `multica graph draft`. The daemon and the CLI it puts on
+	// the agent's PATH are one binary, so both advertise the same token: a
+	// runtime without it must never claim an authoring task, and the CLI
+	// endpoints refuse callers that did not announce it.
+	DaemonCapabilityGraphAuthoringV1    = "graph-authoring-v1"
+	CLICapabilityGraphAuthoringV1       = "graph-authoring-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
 	DaemonCapabilityExecutionManifestV1 = "execution-manifest-v1"

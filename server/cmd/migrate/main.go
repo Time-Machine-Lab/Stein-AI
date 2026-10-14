@@ -140,6 +140,8 @@ var concurrentIndexCleanups = map[string]string{
 	"368_graph_trigger_schedule":                                "graph_trigger_schedule_idx",
 	"370_graph_trigger_event_root":                              "graph_trigger_event_root_idx",
 	"371_graph_trigger_event_history":                           "graph_trigger_event_history_idx",
+	"373_graph_generation_id":                                   "graph_generation_id_idx",
+	"374_graph_generation_requester":                            "graph_generation_requester_idx",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
