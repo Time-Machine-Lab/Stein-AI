@@ -459,9 +459,9 @@ export function GraphEditor({
           return;
         if (event.key.toLowerCase() === "z") {
           event.preventDefault();
-          useGraphDraftStore
-            .getState()
-            [event.shiftKey ? "redo" : "undo"](draftKey);
+          const draft = useGraphDraftStore.getState();
+          if (event.shiftKey) draft.redo(draftKey);
+          else draft.undo(draftKey);
         }
         if (event.key.toLowerCase() === "y") {
           event.preventDefault();
