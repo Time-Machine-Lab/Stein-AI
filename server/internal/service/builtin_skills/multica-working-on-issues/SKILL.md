@@ -57,35 +57,25 @@ also require `--expected-revision` from a fresh read. Approvals additionally
 bind `--approval-id` and `--candidate-digest`. Graph task credentials cannot
 use these management commands.
 
-Human users can also open the workspace Graph page and describe a workflow
-with **Create with AI**, selecting the participating agents, one default
-executor and a final approver. The server does not generate anything itself: it
-queues the request as a task on the default executor's runtime, and that agent
-answers with an editable workflow draft. The draft may spread its steps across
-the participating agents, and it uses typed branches, parallel paths and
-bounded loops when the description calls for them. It is never saved, published
-or run by the submission — the requester reviews the steps, saves the draft,
-then publishes and starts through the normal human controls. If no agent can
-serve the request, manual creation remains available.
+Human users can also open the workspace Graph page and design a workflow in a
+conversation with **Create with AI**: they name the participating agents, one
+default executor and a final approver, and every later turn is an ordinary chat
+message. The server does not generate anything itself — it runs that
+conversation on the default executor's runtime, and a reply may end with one
+`<graph_draft>` block holding a complete workflow definition, which the page
+merges into the draft beside it as the reply arrives. The draft may spread its
+steps across the participating agents, and it uses typed branches, parallel
+paths and bounded loops when the description calls for them. Nothing is saved,
+published or run by the conversation: the requester opens the editor, saves the
+draft, then publishes and starts through the normal human controls. If no agent
+can serve the conversation, manual creation remains available.
 
-An agent acting on such a request is a Graph authoring task, and reads it with
-the task-scoped credential of that request — the same credential rule as a Graph
-node, but a different pair of commands:
-
-```bash
-multica graph draft context --output json
-multica graph draft submit --file /path/to/draft.json --summary "One sentence about the draft" --output json
-```
-
-`context` returns the authoring contract, the requirements, the agent team the
-draft may use and the remaining submissions. `submit` validates one definition
-against the stored request: an accepted draft is held for the requester, and a
-rejected one prints the reason and spends one of a small fixed number of
-submissions (4). Fix the file and submit again within that budget; the request
-fails once it is gone, and also if no runtime picks it up or it outlives its run
-budget. These two commands are the exception to the rule below — unlike the
-management commands, they *require* a Graph task credential and work for no one
-else.
+An agent answering in one of those conversations is a Graph authoring task, and
+reads it with the task-scoped credential of that request — the same credential
+rule as a Graph node. It needs no Graph-specific command: it replies in the chat
+like any other task, and the contract for the `<graph_draft>` block arrives with
+the turn. There is no submission budget — refine the definition for as many
+turns as the requester keeps asking, exactly like any other conversation.
 
 ## PR linking and close intent are two distinct contracts
 
