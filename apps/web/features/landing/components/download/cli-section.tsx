@@ -4,9 +4,10 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useLocale } from "../../i18n";
+import { RELEASE_REPO } from "../../release-repo";
 
-const INSTALL_CMD =
-  "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash";
+// The script defaults to upstream releases, so point it at ours explicitly.
+const INSTALL_CMD = `curl -fsSL https://raw.githubusercontent.com/${RELEASE_REPO}/main/scripts/install.sh | MULTICA_RELEASE_REPO=${RELEASE_REPO} bash`;
 const SETUP_CMD = "multica setup";
 
 /**

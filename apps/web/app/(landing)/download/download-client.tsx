@@ -13,10 +13,10 @@ import {
   detectOS,
   type DetectResult,
 } from "@/features/landing/utils/os-detect";
+import { RELEASE_REPO } from "@/features/landing/release-repo";
 import type { LatestRelease } from "@/features/landing/utils/github-release";
 
-const ALL_RELEASES_URL =
-  "https://github.com/multica-ai/multica/releases";
+const ALL_RELEASES_URL = `https://github.com/${RELEASE_REPO}/releases`;
 
 export function DownloadClient({ release }: { release: LatestRelease }) {
   const [detected, setDetected] = useState<DetectResult | null>(null);

@@ -1,3 +1,4 @@
+import { RELEASE_REPO } from "../release-repo";
 import {
   parseReleaseAssets,
   type DownloadAssets,
@@ -30,8 +31,7 @@ export interface LatestRelease {
   assets: DownloadAssets;
 }
 
-const GITHUB_RELEASES_URL =
-  "https://api.github.com/repos/multica-ai/multica/releases?per_page=2";
+const GITHUB_RELEASES_URL = `https://api.github.com/repos/${RELEASE_REPO}/releases?per_page=2`;
 
 const REVALIDATE_SECONDS = 300;
 
