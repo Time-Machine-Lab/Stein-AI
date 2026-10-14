@@ -21,16 +21,58 @@
   artifacts (artifact ids must be UUIDs), output schema, diagnostics and the
   tested candidate SHA.
 - `server/internal/handler/graph_generation.go`: `GetGraphGenerationOptions`
-  reports configured AI availability; `GenerateGraph` accepts human workspace
-  member requests at `POST /api/graphs/generate` with `prompt`, `agent_id` and
-  `approver_id`. It validates invocation permission and Graph eligibility,
-  uses the server-internal LLM client, and returns a validated `definition`
-  without persisting or executing it. Agent and approver identities are fixed
-  by the server. `graph_generation_context.go` includes the current definition
-  and bounded conversation history; V2 output is checked against topology,
-  bindings and authorized actor aliases before being returned as a proposal.
+  reports configured AI availability; **`GenerateGraph` is the legacy
+  server-model path**, kept as a fallback while the runtime path rolls out. It
+  accepts human workspace member requests at `POST /api/graphs/generate` with
+  `prompt`, `agent_id` and `approver_id`, validates invocation permission and
+  Graph eligibility, uses the server-internal LLM client, and returns a
+  validated `definition` without persisting or executing it. Agent and approver
+  identities are fixed by the server. `graph_generation_context.go` includes
+  the current definition and bounded conversation history; V2 output is checked
+  against topology, bindings and authorized actor aliases before being returned
+  as a proposal.
+- `server/internal/handler/graph_authoring.go`: the runtime authoring path.
+  `CreateGraphGeneration`, `GetGraphGeneration` and `CancelGraphGeneration`
+  serve `POST /api/graphs/generations`, `GET /api/graphs/generations/{id}` and
+  `POST /api/graphs/generations/{id}/cancel`; `GetGraphAuthoringContext` and
+  `SubmitGraphAuthoringDraft` serve the two `multica graph draft` commands and
+  are reached with a Graph authoring task credential, which
+  `graphAuthoringIdentity` resolves. `graphAgentEligible` gates the agents a
+  request may use, `resolveGraphAuthoringDraft` validates a submitted
+  definition against the stored request, and `verifyGraphAuthoringAgents`
+  rejects a draft that names an agent outside the team.
+- `server/internal/handler/graph_authoring_request.go`: `graphAuthoringTeam`
+  resolves and checks the requested scope, `graphAuthoringDirectory` builds the
+  team directory the model sees, `buildGraphAuthoringRequest` assembles the
+  request (contract, requirements, team, limits) and
+  `graphAuthoringActorsOf` reads the authorized actor aliases back out of it.
+- `server/internal/service/graph_generation.go`: `GraphGenerationViewOf`
+  derives the read status (`queued`/`running`/`succeeded`/`failed`/`cancelled`)
+  from the record; `GraphGenerationQueueTimeout` (3 min) and
+  `GraphGenerationRunTimeout` (15 min) bound a request, and
+  `GraphGenerationMaxSubmissions` (4) bounds its rejected drafts.
+  `Create`, `Get`, `Cancel`, `AuthoringRequest` and `SubmitDraft` are the
+  service entry points, and `publish` emits
+  `protocol.EventGraphGenerationUpdated` (`graph:generation_updated`).
+  `graph_generation_store.go` holds the statements, including
+  `LockGraphGenerationRequester` (one in-flight request per requester),
+  `RecordGraphGenerationSubmission` (counts a rejected draft) and
+  `PruneGraphGenerations` (retention).
+- `server/internal/service/graph_authoring_task.go`: `EventGraphGenerationUpdated`
+  is also published here when the request is queued.
+- `server/cmd/multica/cmd_graph.go`: `graph draft context`
+  (`runGraphDraftContext`) and `graph draft submit` (`runGraphDraftSubmit`,
+  `--file` and `--summary`) are the task-credential commands an authoring agent
+  uses; `newGraphCommand` also defines the human management and node commands.
+- Migrations `372_graph_generation`, `373_graph_generation_id` and
+  `374_graph_generation_requester` create and extend the `graph_generation`
+  table that stores the request and its `draft` jsonb.
 - `packages/views/graphs/graph-editor.tsx`: the shared web/desktop creation
   editor presents AI authoring, visual step editing and explicit draft saving.
+  It picks its path through `graphGenerationMode` in
+  `packages/core/graphs/controls.ts` (runtime wins, the server model is the
+  fallback), queues through `useCreateGraphGeneration`, and polls
+  `graphGenerationJob` until the task reaches a terminal status.
 
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`
@@ -244,4 +286,10 @@ grep -n 'extractIdentifiers(\|extractClosingIdentifiers(\|derivePRState(' intern
 grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/github.go pkg/db/queries/github.sql
 grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
+grep -n 'func (h \*Handler) CreateGraphGeneration\|func (h \*Handler) GetGraphAuthoringContext\|func (h \*Handler) SubmitGraphAuthoringDraft\|func (h \*Handler) graphAgentEligible\|func (h \*Handler) resolveGraphAuthoringDraft\|func (h \*Handler) verifyGraphAuthoringAgents' internal/handler/graph_authoring.go
+grep -n 'func (h \*Handler) graphAuthoringTeam\|func (h \*Handler) graphAuthoringDirectory\|func (h \*Handler) buildGraphAuthoringRequest\|func graphAuthoringActorsOf' internal/handler/graph_authoring_request.go
+grep -n 'func GraphGenerationViewOf\|GraphGenerationQueueTimeout\|GraphGenerationRunTimeout\|GraphGenerationMaxSubmissions\|EventGraphGenerationUpdated' internal/service/graph_generation.go
+grep -n 'func LockGraphGenerationRequester\|func RecordGraphGenerationSubmission\|func PruneGraphGenerations' internal/service/graph_generation_store.go
+grep -n 'Use: "context"\|Use: "submit"'  cmd/multica/cmd_graph.go
+grep -n 'CREATE TABLE.*graph_generation'   migrations/372_graph_generation.up.sql
 ```

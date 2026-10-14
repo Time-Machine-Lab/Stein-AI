@@ -1,6 +1,10 @@
 # Graph AI 编排改用运行时智能体：实施计划与待办
 
-> 设计与偏差清单见 [graph-ai-authoring-runtime-agents](../design/graph-ai-authoring-runtime-agents.md)。本计划**未开始实现**，开工前先拿到设计文档第 6 节的决定。
+> 设计与偏差清单见 [graph-ai-authoring-runtime-agents](../design/graph-ai-authoring-runtime-agents.md)。设计文档第 6 节的决定已拍板，见该文档的状态行。
+>
+> **进度**：Task 1–4（多智能体目录、专用任务类型与 daemon 提示词、`multica graph draft` 子命令与提交校验、三个异步接口与迁移 372–374）已完成，尚未提交；Task 5（前端）与 Task 6（文档与内置 Skill）已完成；**Task 7 真机验收未做**。因此"验收通过后删除旧路径"这一条也尚未执行——`POST /api/graphs/generate` 与同步服务端 LLM 路径仍在，作为后备。
+>
+> 另需知悉的两处落地偏差：迁移范围守卫之外，`server/internal/service/graph_integration_test.go` 的私有测试 schema 迁移上界已从 371 提到 374，并新增 `TestGraphIntegrationCoversGraphMigrations` 防止下次漏加。前端错误呈现与计划略有不同：任务级与请求级失败都经 `GraphAiComposer` 的 `role="alert"` 呈现（按错误码本地化），编辑器的 `GraphError` 只负责编辑操作自身的失败，避免同一个错误渲染两次。
 
 **Goal:** 让 Graph 的 AI 创建不再依赖服务端模型密钥，由用户选择的运行时智能体生成可编辑草稿，并能把不同节点分配给不同智能体。
 

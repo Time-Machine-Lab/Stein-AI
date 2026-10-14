@@ -1,6 +1,10 @@
 # Graph AI 编排改用运行时智能体：设计提案
 
-状态：设计提案，**尚未实现**。日期：2026-10-14。代码基线：`d9ad07260`（v0.1.4）。关联文档：[V2 使用与发布说明](../graph-v2-delivery.md)、[V2 wire contract](graph-v2-contract.md)、实施计划与待办 [2026-10-14-graph-ai-authoring-runtime-agents](../plans/2026-10-14-graph-ai-authoring-runtime-agents.md)。
+状态：**已实现**（后端与运行时编排路径；前端已接线）。日期：2026-10-14。代码基线：`d9ad07260`（v0.1.4）。关联文档：[V2 使用与发布说明](../graph-v2-delivery.md)、[V2 wire contract](graph-v2-contract.md)、实施计划与待办 [2026-10-14-graph-ai-authoring-runtime-agents](../plans/2026-10-14-graph-ai-authoring-runtime-agents.md)。
+
+> 第 6 节的产品决策已拍板，实际采纳如下：**问题 1** 用多选参与范围加一个默认执行者（4.3）；**问题 2** 采纳方案 **B**——旧的 `POST /api/graphs/generate` 与同步服务端 LLM 路径保留为后备，真机验收通过后再删（4.6）；**问题 3** 单独建表 `graph_generation`，草稿存 `draft jsonb`；**问题 4** 生成前提示消耗所选智能体的额度并占用一个运行时（4.7）；**问题 5（D7）** 本期不做。
+>
+> 尚未完成：真机验收（未配置 `MULTICA_LLM_*` 的环境里用真实 Claude 与 Codex 各生成一次）、验收通过后删除旧路径、`apps/mobile` 切到运行时路径。
 
 ## 1 背景
 

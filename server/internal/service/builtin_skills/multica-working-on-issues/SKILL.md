@@ -58,13 +58,34 @@ bind `--approval-id` and `--candidate-digest`. Graph task credentials cannot
 use these management commands.
 
 Human users can also open the workspace Graph page and describe a workflow
-with **Create with AI**, selecting an agent and final approver. The server's
-configured AI provider returns an editable workflow draft, including typed
-branches, parallel paths and bounded loops when requested; it does not save,
-publish or run it. Review the steps, save the draft, then publish and start
-through the normal human controls. This authoring feature does not give Graph
-node credentials permission to create or modify workflows. If the server AI
-provider is unconfigured, manual creation remains available.
+with **Create with AI**, selecting the participating agents, one default
+executor and a final approver. The server does not generate anything itself: it
+queues the request as a task on the default executor's runtime, and that agent
+answers with an editable workflow draft. The draft may spread its steps across
+the participating agents, and it uses typed branches, parallel paths and
+bounded loops when the description calls for them. It is never saved, published
+or run by the submission — the requester reviews the steps, saves the draft,
+then publishes and starts through the normal human controls. If no agent can
+serve the request, manual creation remains available.
+
+An agent acting on such a request is a Graph authoring task, and reads it with
+the task-scoped credential of that request — the same credential rule as a Graph
+node, but a different pair of commands:
+
+```bash
+multica graph draft context --output json
+multica graph draft submit --file /path/to/draft.json --summary "One sentence about the draft" --output json
+```
+
+`context` returns the authoring contract, the requirements, the agent team the
+draft may use and the remaining submissions. `submit` validates one definition
+against the stored request: an accepted draft is held for the requester, and a
+rejected one prints the reason and spends one of a small fixed number of
+submissions (4). Fix the file and submit again within that budget; the request
+fails once it is gone, and also if no runtime picks it up or it outlives its run
+budget. These two commands are the exception to the rule below — unlike the
+management commands, they *require* a Graph task credential and work for no one
+else.
 
 ## PR linking and close intent are two distinct contracts
 

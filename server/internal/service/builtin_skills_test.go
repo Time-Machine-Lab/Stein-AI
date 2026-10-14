@@ -261,6 +261,14 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 		// Owner ruling: metadata is deliberately free-form custom state;
 		// the platform curates no key vocabulary.
 		"the platform curates no vocabulary",
+		// AI authoring moved off the server model and onto a runtime agent.
+		// Pin the two task-credential commands and the fact that the server no
+		// longer generates the draft itself, so this section cannot quietly
+		// revert to describing the legacy path.
+		"multica graph draft context --output json",
+		"multica graph draft submit --file",
+		"queues the request as a task on the default executor's runtime",
+		"The server does not generate anything itself",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(body, want) {
@@ -281,6 +289,10 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 		"multica issue metadata list <issue-id> --output json",
 		"multica issue comment list <issue-id> --thread <trigger-comment-id>",
 		"multica issue comment add <issue-id> --parent <trigger-comment-id>",
+		// The old AI authoring section claimed the server's own model writes the
+		// draft. That stopped being true when authoring moved to a runtime agent,
+		// and the claim is the kind that reads as authoritative and misleads.
+		"configured AI provider returns an editable workflow draft",
 	}
 	for _, forbidden := range mustNotContain {
 		if strings.Contains(body, forbidden) {
