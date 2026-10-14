@@ -150,25 +150,6 @@ export function useGraphBuilderSession(options: {
   };
 
   /**
-   * Retires the conversation once the graph it designed has been saved.
-   *
-   * Archived, not deleted: the conversation is the record of how the workflow
-   * was designed, and an archived session is read-only, drops out of the
-   * recovery list and can never run a task. Best-effort by design — the graph
-   * is already committed at this point, so a failure here must never turn a
-   * successful save into a retryable error.
-   */
-  const archiveAfterCreate = async () => {
-    if (!sessionId) return;
-    try {
-      await api.setChatSessionArchived(sessionId, true);
-      void invalidateSessionList();
-    } catch {
-      // It stays listed; the user can discard it explicitly.
-    }
-  };
-
-  /**
    * Sends one turn.
    *
    * `commitInput` is the composer's clear (MUL-5181): it runs the moment the
@@ -286,7 +267,6 @@ export function useGraphBuilderSession(options: {
     },
     start,
     destroy,
-    archiveAfterCreate,
     send,
     stop,
   };

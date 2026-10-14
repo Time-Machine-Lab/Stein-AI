@@ -60,7 +60,6 @@ vi.mock("./use-graph-builder-session", () => ({
     handleRestoreDraftApplied: vi.fn(),
     start: vi.fn(),
     destroy: vi.fn(async () => true),
-    archiveAfterCreate: vi.fn(),
     send: vi.fn(async () => true),
     stop: vi.fn(),
   }),
