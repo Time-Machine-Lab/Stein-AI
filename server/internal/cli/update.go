@@ -224,9 +224,25 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 	return nil
 }
 
+// DefaultReleaseRepo is the GitHub "owner/name" that `multica update` reads
+// releases from. Release builds override it via ldflags so a fork's binaries
+// update from the fork; MULTICA_RELEASE_REPO overrides it at runtime.
+var DefaultReleaseRepo = "multica-ai/multica"
+
+func releaseRepo() string {
+	if repo := strings.TrimSpace(os.Getenv("MULTICA_RELEASE_REPO")); repo != "" {
+		return repo
+	}
+	return DefaultReleaseRepo
+}
+
+func releaseAPIURL(path string) string {
+	return "https://api.github.com/repos/" + releaseRepo() + "/" + path
+}
+
 func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/tags/"+tag, nil)
+	req, err := http.NewRequest(http.MethodGet, releaseAPIURL("releases/tags/"+tag), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +268,7 @@ func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 // FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
 func FetchLatestRelease() (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, releaseAPIURL("releases/latest"), nil)
 	if err != nil {
 		return nil, err
 	}

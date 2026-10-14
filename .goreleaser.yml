@@ -12,6 +12,8 @@ builds:
       - -X main.version={{.Version}}
       - -X main.commit={{.ShortCommit}}
       - -X main.date={{.Date}}
+      # `multica update` reads releases from the repository that built the binary.
+      - -X github.com/multica-ai/multica/server/internal/cli.DefaultReleaseRepo={{ envOrDefault "GITHUB_REPOSITORY" "multica-ai/multica" }}
     env:
       - CGO_ENABLED=0
     goos:

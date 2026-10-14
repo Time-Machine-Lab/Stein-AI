@@ -18,6 +18,10 @@ REPO_URL="https://github.com/multica-ai/multica.git"
 REPO_WEB_URL="https://github.com/multica-ai/multica"  # without .git, for GitHub web APIs
 INSTALL_DIR="${MULTICA_INSTALL_DIR:-$HOME/.multica/server}"
 BREW_PACKAGE="multica-ai/tap/multica"
+# GitHub "owner/name" that CLI release archives are downloaded from. A fork sets
+# MULTICA_RELEASE_REPO to use its own releases; Homebrew is then skipped because
+# the tap only carries upstream builds.
+RELEASE_REPO="${MULTICA_RELEASE_REPO:-multica-ai/multica}"
 
 # Host ports Compose reported after `up -d`; set by setup_server and reused by
 # the summary so the health check and the printed URLs cannot diverge.
@@ -149,13 +153,13 @@ install_cli_binary() {
 
   # Get latest release tag
   local latest
-  latest=$(curl -sI "$REPO_WEB_URL/releases/latest" 2>/dev/null | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n' || true)
+  latest=$(curl -sI "https://github.com/$RELEASE_REPO/releases/latest" 2>/dev/null | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n' || true)
   if [ -z "$latest" ]; then
     fail "Could not determine latest release. Check your network connection."
   fi
 
   local version="${latest#v}"
-  local url="https://github.com/multica-ai/multica/releases/download/${latest}/multica-cli-${version}-${OS}-${ARCH}.tar.gz"
+  local url="https://github.com/$RELEASE_REPO/releases/download/${latest}/multica-cli-${version}-${OS}-${ARCH}.tar.gz"
   local tmp_dir
   tmp_dir=$(mktemp -d)
 
@@ -284,7 +288,7 @@ install_cli() {
     fi
 
     info "Multica CLI $current_ver installed, latest is $latest_ver — upgrading..."
-    if command_exists brew && brew list "$BREW_PACKAGE" >/dev/null 2>&1; then
+    if command_exists brew && [ -z "${MULTICA_RELEASE_REPO:-}" ] && brew list "$BREW_PACKAGE" >/dev/null 2>&1; then
       upgrade_cli_brew
     else
       install_cli_binary
@@ -296,7 +300,7 @@ install_cli() {
     return 0
   fi
 
-  if command_exists brew; then
+  if command_exists brew && [ -z "${MULTICA_RELEASE_REPO:-}" ]; then
     install_cli_brew || install_cli_binary
   else
     install_cli_binary
