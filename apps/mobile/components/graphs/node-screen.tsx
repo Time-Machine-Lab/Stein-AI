@@ -132,10 +132,10 @@ export function GraphNodeScreen() {
             ]}
             disabled={disabled}
           />
-          {number("Maximum attempts (1–3)", node.maxAttempts ?? 2, [
+          {number("Maximum attempts", node.maxAttempts ?? 16, [
             "maxAttempts",
           ])}
-          {number("Timeout in seconds", node.timeoutSeconds ?? 3600, [
+          {number("Timeout in seconds", node.timeoutSeconds ?? 21600, [
             "timeoutSeconds",
           ])}
         </>

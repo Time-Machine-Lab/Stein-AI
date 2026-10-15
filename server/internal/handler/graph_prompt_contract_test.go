@@ -81,7 +81,7 @@ func TestLegacyGraphPromptFrameUnchanged(t *testing.T) {
 // both authoring paths should change, then update the digest.
 func TestGraphDefinitionGrammarIsUnchanged(t *testing.T) {
 	t.Parallel()
-	const pinned = "b361bcfa31a99231234777818e21e9b2e1bef88c9dae46b24e9cb83b917e0683"
+	const pinned = "cb47ae803549f8278c81cde5e308cd3d3f05645e1478db1a8200129743add2ee"
 	sum := sha256.Sum256([]byte(graphDefinitionGrammar))
 	got := hex.EncodeToString(sum[:])
 	if got == pinned {

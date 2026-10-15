@@ -75,8 +75,8 @@ function blankDefinition(name = ""): GraphDefinition {
           inputs: { context: { source: "run_input", path: "" } },
           outputSchema: objectSchema,
           executionMode: "none",
-          maxAttempts: 2,
-          timeoutSeconds: 3600,
+          maxAttempts: 16,
+          timeoutSeconds: 21600,
         },
       ],
       "",
@@ -136,7 +136,7 @@ function newNode(type: string, nodeKey: string): GraphNodeDefinition {
         outputSchema: objectSchema,
         loop: {
           body: emptyBody(nodeKey),
-          maxIterations: 3,
+          maxIterations: 16,
           condition: {
             op: "eq",
             left: { source: "constant", value: false },

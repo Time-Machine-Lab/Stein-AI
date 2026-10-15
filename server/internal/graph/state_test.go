@@ -9,6 +9,43 @@ func testIdentity() AttemptIdentity {
 	return AttemptIdentity{RunID: "run-1", NodeRunID: "node-1", TaskID: "task-1", AttemptNo: 1, ExecutionGeneration: 1, InputHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 }
 
+func TestExecutionHonorsBudgetsAboveThree(t *testing.T) {
+	for _, budget := range []int{16, 100} {
+		a := testAdmission()
+		a.MaxAttempts = budget
+		a.Attempts = 0
+		if err := CanSchedule(a); err != nil {
+			t.Fatalf("budget %d: first attempt rejected: %v", budget, err)
+		}
+		a.Attempts = budget - 1
+		if err := CanRetry(a); err != nil {
+			t.Fatalf("budget %d: last retry rejected: %v", budget, err)
+		}
+		c := Completion{RunState: RunActive, ControlState: ControlRun, TaskState: "failed", ExecutionStopped: true, Retryable: true, Attempts: budget - 1, MaxAttempts: budget}
+		if got := DecideCompletion(c); !got.Retry || got.NodeState != NodeReady {
+			t.Fatalf("budget %d: retryable failure did not retry: %+v", budget, got)
+		}
+		a.NodeState = NodeActive
+		a.Attempts = budget
+		if err := CanStart(a); err != nil {
+			t.Fatalf("budget %d: final attempt could not start: %v", budget, err)
+		}
+		a.NodeState = NodeReady
+		if err := CanRetry(a); err == nil {
+			t.Fatalf("budget %d: exhausted budget allowed another retry", budget)
+		}
+		c.Attempts = budget
+		if got := DecideCompletion(c); got.Retry || got.RunState != RunFailed || got.Reason != "budget_exhausted" {
+			t.Fatalf("budget %d: exhausted budget did not fail: %+v", budget, got)
+		}
+		a.NodeState = NodeActive
+		a.Attempts = budget + 1
+		if err := CanStart(a); err == nil {
+			t.Fatalf("budget %d: attempt beyond budget could start", budget)
+		}
+	}
+}
+
 func TestAdmissionFailsClosedForPauseCancelUnknownAndBudget(t *testing.T) {
 	if err := CanRetry(testAdmission()); err != nil {
 		t.Fatal(err)

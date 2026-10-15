@@ -247,6 +247,27 @@ beforeEach(() => {
 });
 
 describe("AI graph proposals", () => {
+  it("defaults agent nodes to 16 attempts and six hours without fixed upper limits", () => {
+    manualEditor();
+    expect(screen.getByLabelText(labels.editor.attempts)).toHaveValue(16);
+    expect(screen.getByLabelText(labels.editor.timeout)).toHaveValue(21600);
+    expect(screen.getByLabelText(labels.editor.attempts)).not.toHaveAttribute(
+      "max",
+    );
+    expect(screen.getByLabelText(labels.editor.timeout)).not.toHaveAttribute("max");
+    fireEvent.change(screen.getByLabelText(labels.editor.attempts), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText(labels.editor.timeout), {
+      target: { value: "172800" },
+    });
+    expect(
+      useGraphDraftStore.getState().documents[draftKey]?.definition.nodes[1],
+    ).toMatchObject({ maxAttempts: 100, timeoutSeconds: 172800 });
+    fireEvent.click(screen.getByRole("button", { name: "Add node" }));
+    expect(screen.getByLabelText(labels.editor.attempts)).toHaveValue(16);
+    expect(screen.getByLabelText(labels.editor.timeout)).toHaveValue(21600);
+  });
   it("edits a readable step name without changing execution bindings", () => {
     manualEditor();
     fireEvent.change(screen.getByLabelText("Step name"), {

@@ -310,6 +310,27 @@ describe("Graph controls", () => {
 });
 
 describe("serial step editor model", () => {
+  it("imports and preserves agent execution settings above the old limits", () => {
+    const definition = createSerialDefinition(
+      "Long running",
+      [
+        {
+          nodeKey: "work",
+          type: "agent",
+          agentId: "agent-1",
+          instructions: "Work",
+          executionMode: "none",
+          maxAttempts: 100,
+          timeoutSeconds: 172800,
+          outputSchema: { type: "object" },
+        },
+      ],
+      "member-1",
+    );
+    expect(importGraphDefinition(exportGraphDefinition(definition))).toEqual(
+      definition,
+    );
+  });
   it("always builds explicit start, agent steps, approval and end with ordered edges", () => {
     const definition = createSerialDefinition(
       "Build",
@@ -432,7 +453,7 @@ describe("serial step editor model", () => {
         JSON.stringify({
           ...wire,
           nodes: wire.nodes.map((node) =>
-            node.type === "agent" ? { ...node, max_attempts: 4 } : node,
+            node.type === "agent" ? { ...node, max_attempts: 0 } : node,
           ),
         }),
       ),

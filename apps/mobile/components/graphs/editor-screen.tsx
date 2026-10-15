@@ -67,8 +67,8 @@ export function createGraphNode(
         inputs: { context: { source: "run_input", path: "" } },
         outputSchema: object,
         executionMode: "none",
-        maxAttempts: 2,
-        timeoutSeconds: 3600,
+        maxAttempts: 16,
+        timeoutSeconds: 21600,
       };
     case "approval":
       return { ...base, approval: { mode: "all", approverIds: [] } };
@@ -105,7 +105,7 @@ export function createGraphNode(
         outputSchema: object,
         loop: {
           body: emptyGraph("Loop body"),
-          maxIterations: 3,
+          maxIterations: 16,
           condition: {
             op: "eq",
             left: { source: "constant", value: false },

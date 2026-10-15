@@ -24,8 +24,10 @@ func TestDefinitionRejectsUnsupportedTopologyAndConfiguration(t *testing.T) {
 		{"branch", func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "start", To: "approve"}) }},
 		{"duplicate_key", func(d *Definition) { d.Nodes[2].Key = "implement" }},
 		{"missing_agent", func(d *Definition) { d.Nodes[1].AgentID = "" }},
-		{"invalid_budget", func(d *Definition) { d.Nodes[1].MaxAttempts = 4 }},
+		{"invalid_budget", func(d *Definition) { d.Nodes[1].MaxAttempts = 0 }},
+		{"negative_budget", func(d *Definition) { d.Nodes[1].MaxAttempts = -1 }},
 		{"zero_timeout", func(d *Definition) { d.Nodes[1].TimeoutSeconds = 0 }},
+		{"negative_timeout", func(d *Definition) { d.Nodes[1].TimeoutSeconds = -1 }},
 		{"unknown_mode", func(d *Definition) { d.Nodes[1].ExecutionMode = "local_directory" }},
 		{"approval_not_last", func(d *Definition) {
 			d.Edges = []Edge{{From: "start", To: "approve"}, {From: "approve", To: "implement"}, {From: "implement", To: "end"}}
@@ -54,6 +56,28 @@ func TestDefinitionRejectsUnsupportedTopologyAndConfiguration(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestAgentExecutionSettingsHaveNoFixedUpperLimit(t *testing.T) {
+	for _, version := range []int{SchemaVersion, LatestSchemaVersion} {
+		for _, settings := range []struct{ attempts, timeout int }{{16, 21600}, {100, 172800}} {
+			d := testDefinition()
+			d.SchemaVersion = version
+			d.Nodes[1].MaxAttempts = settings.attempts
+			d.Nodes[1].TimeoutSeconds = settings.timeout
+			raw, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := ParseDefinition(raw)
+			if err != nil {
+				t.Fatalf("V%d rejected attempts=%d, timeout=%d: %v", version, settings.attempts, settings.timeout, err)
+			}
+			if parsed.Nodes[1].MaxAttempts != settings.attempts || parsed.Nodes[1].TimeoutSeconds != settings.timeout {
+				t.Fatal("execution settings changed during parsing")
+			}
+		}
 	}
 }
 

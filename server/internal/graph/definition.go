@@ -202,11 +202,11 @@ func validateNode(n Node) error {
 		if strings.TrimSpace(n.Instructions) == "" || len(n.Instructions) > 64<<10 {
 			return invalid(path+".instructions", "must contain 1 to 65536 bytes")
 		}
-		if n.MaxAttempts < 1 || n.MaxAttempts > 3 {
-			return invalid(path+".max_attempts", "must be between 1 and 3")
+		if n.MaxAttempts < 1 {
+			return invalid(path+".max_attempts", "must be a positive integer")
 		}
-		if n.TimeoutSeconds < 1 || n.TimeoutSeconds > 86400 {
-			return invalid(path+".timeout_seconds", "must be between 1 and 86400")
+		if n.TimeoutSeconds < 1 {
+			return invalid(path+".timeout_seconds", "must be a positive integer")
 		}
 		if n.ExecutionMode != ExecutionNone && n.ExecutionMode != ExecutionProduceCommit && n.ExecutionMode != ExecutionVerifyCommit {
 			return invalid(path+".execution_mode", "unsupported execution mode")
