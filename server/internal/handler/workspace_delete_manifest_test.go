@@ -65,7 +65,6 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"graph_attachment_upload":           workspaceDelete,
 	"graph_command":                     workspaceDelete,
 	"graph_definition":                  workspaceDelete,
-	"graph_generation":                  workspaceDelete,
 	"graph_issue_owner":                 workspaceDelete,
 	"graph_node_run":                    workspaceDelete,
 	"graph_operation":                   workspaceDelete,
