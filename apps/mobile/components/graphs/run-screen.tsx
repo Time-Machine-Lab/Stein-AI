@@ -187,7 +187,8 @@ function NodeDetail({
       {node.attempts.length > 0 && (
         <>
           <Text>
-            {node.attempts.length} / {node.maxAttempts} attempts
+            {node.attempts.length} / {node.maxAttempts + node.grantedAttempts}{" "}
+            attempts
           </Text>
           {node.issueId && (
             <Button

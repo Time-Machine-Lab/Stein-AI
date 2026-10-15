@@ -100,6 +100,9 @@
     "accepted": "受け入れ済みの提出",
     "events": "実行イベント",
     "artifacts": "成果物と証拠",
+    "result": "実行結果",
+    "details": "ノードの詳細",
+    "select_node": "フロー内のノードを選択すると、その出力を確認できます。",
     "reason": "理由",
     "reason_placeholder": "判断の理由、または解決した障害を記述してください。",
     "pause": "一時停止",
@@ -449,6 +452,11 @@
     "all": "すべて一致",
     "any": "いずれか一致",
     "not": "否定"
+  },
+  "value": {
+    "items": "{{count}} 件",
+    "expand": "全 {{count}} 件を表示",
+    "collapse": "折りたたむ"
   },
   "result_labels": {
     "summary": "概要",

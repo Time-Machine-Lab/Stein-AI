@@ -645,7 +645,7 @@ func (s *GraphService) scheduleNodeV2(ctx context.Context, tx pgx.Tx, run *Graph
 		graphBlockNodeV2(run, index, "authorization_revoked", err)
 		return nil, nil
 	}
-	if len(n.Attempts) >= n.MaxAttempts {
+	if len(n.Attempts) >= n.attemptBudget() {
 		n.State = "failed"
 		graphTerminateV2(run, "failed", "budget_exhausted")
 		return nil, nil
@@ -677,7 +677,7 @@ func (s *GraphService) scheduleNodeV2(ctx context.Context, tx pgx.Tx, run *Graph
 	number := len(n.Attempts) + 1
 	taskID := uuid.NewString()
 	identity := graph.AttemptIdentity{RunID: run.ID, NodeRunID: n.ID, TaskID: taskID, AttemptNo: number, ExecutionGeneration: int64(number), InputHash: n.InputHash}
-	manifest, err := graph.NewAttemptManifest(*n.Spec, identity)
+	manifest, err := graph.NewAttemptManifest(*n.Spec, identity, graph.AttemptGrant{Granted: n.GrantedAttempts, Note: n.HumanNote})
 	if err != nil {
 		graphBlockNodeV2(run, index, "specification_invalid", err)
 		return nil, nil
@@ -705,6 +705,9 @@ func (s *GraphService) scheduleNodeV2(ctx context.Context, tx pgx.Tx, run *Graph
 	}
 	now := time.Now().UTC()
 	n.Attempts = append(n.Attempts, GraphAttemptRecord{TaskID: taskID, AttemptNo: number, Generation: int64(number), State: "queued", Manifest: manifest, ManifestHash: hash, CreatedAt: now})
+	// The note has been delivered: this attempt carries it, and the next one
+	// must not inherit an instruction aimed at this one.
+	n.HumanNote = nil
 	n.State = "active"
 	n.BlockReason = ""
 	n.NextAttemptAt = nil
@@ -788,7 +791,7 @@ func (s *GraphService) completeNodeV2(ctx context.Context, tx pgx.Tx, run *Graph
 		delivery = a.Receipt.DeliveryStatus
 		retryable = a.Receipt.Retryable
 	}
-	decision := graph.DecideCompletion(graph.Completion{RunState: graph.RunActive, ControlState: graph.ControlState(run.ControlState), Expected: a.Manifest.Identity, Result: result, TaskState: a.State, ExecutionStopped: a.StoppedAt != nil, DeliveryStatus: delivery, OutputValid: valid, ArtifactsValid: artifacts, Retryable: retryable, Attempts: len(n.Attempts), MaxAttempts: n.MaxAttempts})
+	decision := graph.DecideCompletion(graph.Completion{RunState: graph.RunActive, ControlState: graph.ControlState(run.ControlState), Expected: a.Manifest.Identity, Result: result, TaskState: a.State, ExecutionStopped: a.StoppedAt != nil, DeliveryStatus: delivery, OutputValid: valid, ArtifactsValid: artifacts, Retryable: retryable, Attempts: len(n.Attempts), MaxAttempts: n.MaxAttempts, Granted: n.GrantedAttempts})
 	n.State = string(decision.NodeState)
 	n.BlockReason = decision.Reason
 	if decision.Retry && a.Receipt != nil && a.StoppedAt != nil {

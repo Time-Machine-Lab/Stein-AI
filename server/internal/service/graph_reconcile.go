@@ -280,7 +280,7 @@ func (s *GraphService) ReconcileRun(ctx context.Context, ws, id string) (GraphRu
 					delivery = a.Receipt.DeliveryStatus
 					retryable = a.Receipt.Retryable
 				}
-				decision := graph.DecideCompletion(graph.Completion{RunState: graph.RunState(run.State), ControlState: graph.ControlState(run.ControlState), Expected: a.Manifest.Identity, Result: result, TaskState: a.State, ExecutionStopped: a.StoppedAt != nil, DeliveryStatus: delivery, OutputValid: outputValid, ArtifactsValid: artifactsValid, Retryable: retryable, Attempts: len(node.Attempts), MaxAttempts: node.MaxAttempts})
+				decision := graph.DecideCompletion(graph.Completion{RunState: graph.RunState(run.State), ControlState: graph.ControlState(run.ControlState), Expected: a.Manifest.Identity, Result: result, TaskState: a.State, ExecutionStopped: a.StoppedAt != nil, DeliveryStatus: delivery, OutputValid: outputValid, ArtifactsValid: artifactsValid, Retryable: retryable, Attempts: len(node.Attempts), MaxAttempts: node.MaxAttempts, Granted: node.GrantedAttempts})
 				node.State = string(decision.NodeState)
 				node.BlockReason = decision.Reason
 				run.State = string(decision.RunState)
@@ -335,7 +335,7 @@ func (s *GraphService) ReconcileRun(ctx context.Context, ws, id string) (GraphRu
 				graphEvent(&run, "node.blocked", "", e.Error())
 				break
 			}
-			if len(node.Attempts) >= node.MaxAttempts {
+			if len(node.Attempts) >= node.attemptBudget() {
 				node.State = "failed"
 				graphFinish(&run, "failed", "budget_exhausted")
 				break
@@ -392,7 +392,7 @@ func (s *GraphService) ReconcileRun(ctx context.Context, ws, id string) (GraphRu
 			number := len(node.Attempts) + 1
 			taskID := uuid.NewString()
 			identity := graph.AttemptIdentity{RunID: run.ID, NodeRunID: node.ID, TaskID: taskID, AttemptNo: number, ExecutionGeneration: int64(number), InputHash: node.InputHash}
-			manifest, e := graph.NewAttemptManifest(*node.Spec, identity)
+			manifest, e := graph.NewAttemptManifest(*node.Spec, identity, graph.AttemptGrant{Granted: node.GrantedAttempts, Note: node.HumanNote})
 			if e != nil {
 				node.State = "blocked"
 				node.BlockReason = "specification_invalid"
@@ -420,6 +420,9 @@ func (s *GraphService) ReconcileRun(ctx context.Context, ws, id string) (GraphRu
 				return run, e
 			}
 			node.Attempts = append(node.Attempts, GraphAttemptRecord{TaskID: taskID, AttemptNo: number, Generation: identity.ExecutionGeneration, State: "queued", Manifest: manifest, ManifestHash: manifestHash, CreatedAt: time.Now().UTC()})
+			// The note has been delivered: this attempt carries it, and the next
+			// one must not inherit an instruction aimed at this one.
+			node.HumanNote = nil
 			node.NextAttemptAt = nil
 			node.State = "active"
 			node.BlockReason = ""

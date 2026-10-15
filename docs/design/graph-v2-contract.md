@@ -54,6 +54,8 @@ Operators: `eq`, `ne` (same JSON type, exact numbers); `gt`, `gte`, `lt`, `lte` 
 
 Loops use do-while semantics: iteration 1 runs once with `node.inputs`. At body completion, exports are resolved and validated, then `loop.condition` runs in the completed child's scope (`run_input`, accepted body node outputs, and `iteration_index`). False completes the loop and publishes that iteration's exports. True resolves `loop.next` in the same completed child's scope, validates against the body input schema, and creates a distinct next scope. True at `max_iterations` terminates with an explicit iteration-budget error; it must never silently report success. Nested loops each have their own iteration index.
 
+A gate inside a loop reports its verdict as an ordinary completion, because the condition can only read *accepted* body outputs. A node whose output drives `loop.condition` (a review, a scoring or an acceptance node) submits `outcome=pass` with the verdict in that output; submitting `needs_changes` instead rejects the node and terminates the whole run as `rejected` (`DecideCompletion`), with no scope created for the next iteration — the loop's `max_iterations` are never reached, and the run cannot be resumed. `needs_changes` remains the outcome for a run that must stop so a person can change the definition, the requirements or the implementation, and for a node that cannot produce an output its schema accepts.
+
 Subgraphs run one isolated child scope and publish the child's validated exports.
 
 ## Pure Go helpers and durable state

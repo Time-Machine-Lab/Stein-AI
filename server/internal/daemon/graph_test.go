@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/graph"
@@ -25,7 +26,7 @@ func graphTestTask(t *testing.T) Task {
 	node := graph.Node{Key: "build", Type: graph.NodeTypeAgent, AgentID: "agent-1", Instructions: "Build exactly the frozen goal.", OutputSchema: json.RawMessage(`{"type":"object"}`), ExecutionMode: graph.ExecutionNone, MaxAttempts: 3, TimeoutSeconds: 60}
 	spec := graph.NodeSpec{ProtocolVersion: 1, Node: node, Input: input, InputHash: ih, AgentConfig: json.RawMessage(`{"id":"agent-1","name":"Builder","instructions":"Frozen persona"}`)}
 	identity := graph.AttemptIdentity{RunID: "run-1", NodeRunID: "node-1", TaskID: "task-1", AttemptNo: 1, ExecutionGeneration: 1, InputHash: ih}
-	manifest, err := graph.NewAttemptManifest(spec, identity)
+	manifest, err := graph.NewAttemptManifest(spec, identity, graph.AttemptGrant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestGraphTaskAcceptsPublishedSourceQualifiedSkillIdentity(t *testing.T) {
 	hash := "sha256:" + strings.Repeat("a", 64)
 	task.Agent.SkillRefs = []SkillRefData{{ID: "builtin-graph-v1", Source: "builtin", Hash: hash}, {ID: "selected-skill", Source: "workspace", Hash: hash}}
 	task.Graph.NodeSpec.Skills = []graph.SkillSnapshot{{ID: "builtin:builtin-graph-v1", Hash: hash, BundleRef: "builtin:builtin-graph-v1"}, {ID: "workspace:selected-skill", Hash: hash, BundleRef: "workspace:selected-skill"}}
-	manifest, err := graph.NewAttemptManifest(task.Graph.NodeSpec, task.Graph.Identity)
+	manifest, err := graph.NewAttemptManifest(task.Graph.NodeSpec, task.Graph.Identity, graph.AttemptGrant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +157,52 @@ func TestGraphPromptHasOnlyFrozenNodeWorkflow(t *testing.T) {
 	for _, forbidden := range []string{"multica issue get", "multica issue comment list", "Active sibling runs"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Errorf("unexpected legacy context %q", forbidden)
+		}
+	}
+}
+
+// TestGraphPromptStatesOutcomeConsequences pins the one thing an executing agent
+// cannot infer from its node spec: what each outcome does to the run.
+//
+// The prompt used to list the three outcomes and leave it there, so a reviewing
+// node had to guess. It guessed with the sentence in the node-execution skill
+// ("For failed verification submit outcome=needs_changes"), which ends the whole
+// run as rejected - so a definition whose loop repeats while the verdict is bad
+// was uniterable, and the loop's max_iterations were never spent. The prompt
+// now states the consequence next to the outcome it belongs to, matching
+// handler/graph_execution_contract_test.go.
+func TestGraphPromptStatesOutcomeConsequences(t *testing.T) {
+	task := graphTestTask(t)
+	prompt := BuildPrompt(task, "codex")
+	for _, required := range []string{
+		"outcome=needs_changes rejects this node and ends the whole run as rejected at once",
+		"put the verdict in the output and submit pass",
+		"keep needs_changes for a run that must stop so a person can change",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Errorf("graph prompt does not state the outcome consequences: missing %q", required)
+		}
+	}
+}
+
+// TestGraphPromptCarriesTheHumanNote pins the delivery half of a human release.
+//
+// The manifest is the only channel that reaches the attempt a person's release
+// creates: the node's input is frozen when the node is created, so a note stored
+// anywhere else - a run event, a comment, the block reason - is never read by
+// the agent that was supposed to act on it. The prompt is where it lands, and it
+// has to arrive as an instruction rather than as more context, because the same
+// prompt tells the agent not to go looking for new instructions elsewhere.
+func TestGraphPromptCarriesTheHumanNote(t *testing.T) {
+	task := graphTestTask(t)
+	if strings.Contains(BuildPrompt(task, "codex"), "A person cleared this node's block") {
+		t.Fatal("an attempt with no grant was told about a person's note")
+	}
+	task.Graph.HumanNote = &graph.HumanNote{Reason: "the environment is fixed now; re-run the deploy", MemberID: "member-1", At: time.Now().UTC()}
+	prompt := BuildPrompt(task, "codex")
+	for _, required := range []string{"A person cleared this node's block and left this instruction for this attempt:", "the environment is fixed now; re-run the deploy"} {
+		if !strings.Contains(prompt, required) {
+			t.Errorf("prompt does not carry the person's note: missing %q", required)
 		}
 	}
 }

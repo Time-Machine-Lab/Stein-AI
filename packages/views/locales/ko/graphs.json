@@ -100,6 +100,9 @@
     "accepted": "수락된 제출",
     "events": "실행 이벤트",
     "artifacts": "산출물 및 증거",
+    "result": "실행 결과",
+    "details": "노드 세부 정보",
+    "select_node": "흐름에서 노드를 선택하면 해당 출력을 확인할 수 있습니다.",
     "reason": "사유",
     "reason_placeholder": "결정 또는 차단 해제 사유를 설명하세요.",
     "pause": "일시 중지",
@@ -449,6 +452,11 @@
     "all": "모든 조건",
     "any": "하나 이상의 조건",
     "not": "아님"
+  },
+  "value": {
+    "items": "{{count}}개",
+    "expand": "{{count}}개 모두 보기",
+    "collapse": "접기"
   },
   "result_labels": {
     "summary": "요약",

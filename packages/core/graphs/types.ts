@@ -186,6 +186,10 @@ export interface GraphNodeRun {
   input: JsonObject;
   inputHash: string;
   maxAttempts: number;
+  // Attempts a person unlocked beyond maxAttempts. Each one is a deliberate
+  // decision on a blocked node, so they sit outside the published budget and
+  // the node's usable budget is maxAttempts + grantedAttempts.
+  grantedAttempts: number;
   canRetry: boolean;
   canResolveBlock: boolean;
   attempts: GraphAttempt[];

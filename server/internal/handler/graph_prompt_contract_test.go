@@ -81,7 +81,7 @@ func TestLegacyGraphPromptFrameUnchanged(t *testing.T) {
 // both authoring paths should change, then update the digest.
 func TestGraphDefinitionGrammarIsUnchanged(t *testing.T) {
 	t.Parallel()
-	const pinned = "67af34bdbfec1d98c8a487ed8244d2bc1a7710c942466cc68c9e3f0f8c5eadc0"
+	const pinned = "b361bcfa31a99231234777818e21e9b2e1bef88c9dae46b24e9cb83b917e0683"
 	sum := sha256.Sum256([]byte(graphDefinitionGrammar))
 	got := hex.EncodeToString(sum[:])
 	if got == pinned {
@@ -91,6 +91,56 @@ func TestGraphDefinitionGrammarIsUnchanged(t *testing.T) {
 		"Both authoring contracts state this text verbatim. If the change is "+
 		"intended, update the digest above.\n\n--- current grammar ---\n%s",
 		got, pinned, graphDefinitionGrammar)
+}
+
+// TestGrammarStatesTheChildMirrorRule pins the one validator rule a model
+// cannot infer from the grammar's shape.
+//
+// A loop or subgraph node and the child definition it wraps each declare an
+// output_schema, and graph/definition_v2.go requires them to be equal by
+// canonical JSON (sameSchema) - not merely compatible. Nothing about the JSON
+// suggests that, so a generated definition happily writes a loop node whose
+// schema "looks right" and only fails at save time, long after the conversation
+// that produced it. The digest test above notices any grammar edit but cannot
+// say which rule was meant; this one names it.
+func TestGrammarStatesTheChildMirrorRule(t *testing.T) {
+	t.Parallel()
+	required := []struct{ what, needle string }{
+		{"child output_schema equality", "copy the child's output_schema onto the node verbatim"},
+		{"canonical comparison", "compares the two by canonical JSON"},
+		{"child input bindings", "supply every required field of the child's input_schema"},
+	}
+	for _, req := range required {
+		if !strings.Contains(graphDefinitionGrammar, req.needle) {
+			t.Errorf("grammar dropped %s: no %q", req.what, req.needle)
+		}
+	}
+}
+
+// TestGrammarStatesTheGateOutcomeRule pins the rule a generated definition gets
+// wrong in a way no validator can catch.
+//
+// A review node inside a loop is a gate: the loop's condition reads its verdict
+// and repeats the body while it is unhappy. That only works if the node reports
+// the verdict as a normal completion. An agent that instead submits
+// needs_changes - which the node-execution contract used to tell it to do for
+// any failed verification - ends the entire run as rejected on the spot, and the
+// loop never runs. Nothing in the definition's shape reveals this, so the
+// grammar has to say it, and the author has to write it into the gate node's
+// instructions. handler/graph_execution_contract_test.go pins the same rule in
+// the text the executing agent reads.
+func TestGrammarStatesTheGateOutcomeRule(t *testing.T) {
+	t.Parallel()
+	required := []struct{ what, needle string }{
+		{"needs_changes is terminal", "ends the whole run as rejected at once, never returning to an earlier step"},
+		{"a gate reports a verdict", "reporting a verdict rather than blocking"},
+		{"the author must say which outcome", "its instructions must tell it to submit pass with that verdict in the output"},
+	}
+	for _, req := range required {
+		if !strings.Contains(graphDefinitionGrammar, req.needle) {
+			t.Errorf("grammar dropped %s: no %q", req.what, req.needle)
+		}
+	}
 }
 
 // TestBuilderContractStatesItsOwnProtocol pins what only the chat contract can

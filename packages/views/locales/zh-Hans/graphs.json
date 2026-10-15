@@ -100,6 +100,9 @@
     "accepted": "已接纳提交",
     "events": "运行事件",
     "artifacts": "产物与证据",
+    "result": "运行结果",
+    "details": "节点详情",
+    "select_node": "在流程中选择一个节点，查看它的产出。",
     "reason": "原因",
     "reason_placeholder": "描述审批原因或阻塞处理情况。",
     "pause": "暂停",
@@ -449,6 +452,11 @@
     "all": "全部条件成立",
     "any": "任一条件成立",
     "not": "条件不成立"
+  },
+  "value": {
+    "items": "{{count}} 项",
+    "expand": "展开全部 {{count}} 项",
+    "collapse": "收起"
   },
   "result_labels": {
     "summary": "总结",

@@ -100,6 +100,9 @@
     "accepted": "Accepted submission",
     "events": "Run events",
     "artifacts": "Artifacts and evidence",
+    "result": "Run result",
+    "details": "Node details",
+    "select_node": "Select a node in the flow to see what it produced.",
     "reason": "Reason",
     "reason_placeholder": "Describe the decision or the resolved blocker.",
     "pause": "Pause",
@@ -449,6 +452,11 @@
     "all": "All conditions",
     "any": "Any condition",
     "not": "Not"
+  },
+  "value": {
+    "items": "{{count}} items",
+    "expand": "Show all {{count}}",
+    "collapse": "Show less"
   },
   "result_labels": {
     "summary": "Summary",
