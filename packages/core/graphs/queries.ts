@@ -104,6 +104,29 @@ export function graphGenerationOptions(wsId: string) {
   });
 }
 
+export const graphBuilderSessionKeys = {
+  list: (wsId: string) =>
+    [...graphKeys.all(wsId), "builder-sessions"] as const,
+};
+
+/**
+ * The caller's unfinished Graph-design conversations, read on demand.
+ *
+ * Not fetched on mount with the rest of the editor: a conversation is normally
+ * addressed by the id in the client's draft document, so this list exists only
+ * to offer a way back when that document is gone. `graphBuilderSessionsOptions`
+ * is therefore only mounted by the setup step, which is exactly the screen that
+ * has nothing else to offer.
+ */
+export function graphBuilderSessionsOptions(wsId: string) {
+  return queryOptions({
+    queryKey: graphBuilderSessionKeys.list(wsId),
+    queryFn: () => api.listGraphBuilderSessions(),
+    enabled: Boolean(wsId),
+    retry: false,
+  });
+}
+
 export function graphListOptions(wsId: string) {
   return queryOptions({
     queryKey: graphKeys.list(wsId),

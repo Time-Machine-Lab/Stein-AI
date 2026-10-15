@@ -493,12 +493,22 @@ func (h *Handler) SwitchAgentBuilderRuntime(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// isAgentBuilderCarrier reports whether an agent is a hidden builder execution
-// carrier. Mirrors the kind/system_key guard the builder SQL statements carry, so
-// the handler rejects a non-builder session before reaching the database rather
-// than relying on an UPDATE matching zero rows.
+// isAgentBuilderCarrier reports whether an agent is the agent-creation studio's
+// hidden execution carrier.
 func isAgentBuilderCarrier(agent db.Agent) bool {
+	return isBuilderCarrier(agent, "agent_builder:")
+}
+
+// isBuilderCarrier reports whether an agent is a hidden builder execution
+// carrier in the given namespace. Mirrors the kind/system_key guard the builder
+// SQL statements carry, so the handler rejects a non-builder session before
+// reaching the database rather than relying on an UPDATE matching zero rows.
+//
+// One predicate rather than one per flow: the namespaces differ, the rule does
+// not, and a second copy is a second place for the handler to disagree with the
+// SQL about what a carrier is.
+func isBuilderCarrier(agent db.Agent, prefix string) bool {
 	return agent.Kind == "system" &&
 		agent.SystemKey.Valid &&
-		strings.HasPrefix(agent.SystemKey.String, "agent_builder:")
+		strings.HasPrefix(agent.SystemKey.String, prefix)
 }

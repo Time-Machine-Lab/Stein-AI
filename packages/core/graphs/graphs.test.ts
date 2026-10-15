@@ -5,6 +5,7 @@ import {
   canApproveGraphRun,
   canDetachGraphRun,
   canReplaceGraphApprover,
+  graphControlState,
   graphRunActions,
   isGraphRuntimeSupported,
   nodeCanRetry,
@@ -114,6 +115,34 @@ describe("Graph controls", () => {
         actor,
       ),
     ).toEqual([]);
+  });
+  // `cancel_requested` is also how the engine stops a run it is ending for some
+  // other reason, so every rejected, failed and cancelled run carries it for
+  // good. Reporting it there would leave a finished run announcing a
+  // cancellation that nothing can ever complete.
+  it("reports a control state only while the run can still be controlled", () => {
+    for (const state of ["succeeded", "rejected", "failed", "cancelled"]) {
+      expect(
+        graphControlState(
+          GraphRunSchema.parse({
+            ...runWire,
+            state,
+            control_state: "cancel_requested",
+          }),
+        ),
+      ).toBeNull();
+    }
+    expect(graphControlState(GraphRunSchema.parse(runWire))).toBeNull();
+    expect(
+      graphControlState(
+        GraphRunSchema.parse({ ...runWire, control_state: "pause" }),
+      ),
+    ).toBe("pause");
+    expect(
+      graphControlState(
+        GraphRunSchema.parse({ ...runWire, control_state: "cancel_requested" }),
+      ),
+    ).toBe("cancel_requested");
   });
   it("never retries an unknown execution or an exhausted budget", () => {
     const base = {
@@ -281,6 +310,27 @@ describe("Graph controls", () => {
 });
 
 describe("serial step editor model", () => {
+  it("imports and preserves agent execution settings above the old limits", () => {
+    const definition = createSerialDefinition(
+      "Long running",
+      [
+        {
+          nodeKey: "work",
+          type: "agent",
+          agentId: "agent-1",
+          instructions: "Work",
+          executionMode: "none",
+          maxAttempts: 100,
+          timeoutSeconds: 172800,
+          outputSchema: { type: "object" },
+        },
+      ],
+      "member-1",
+    );
+    expect(importGraphDefinition(exportGraphDefinition(definition))).toEqual(
+      definition,
+    );
+  });
   it("always builds explicit start, agent steps, approval and end with ordered edges", () => {
     const definition = createSerialDefinition(
       "Build",
@@ -403,7 +453,7 @@ describe("serial step editor model", () => {
         JSON.stringify({
           ...wire,
           nodes: wire.nodes.map((node) =>
-            node.type === "agent" ? { ...node, max_attempts: 4 } : node,
+            node.type === "agent" ? { ...node, max_attempts: 0 } : node,
           ),
         }),
       ),

@@ -20,6 +20,7 @@ import {
   exportGraphDefinition,
   graphDefinitionChanges,
   graphDraftKey,
+  graphGenerationMode,
   graphGenerationOptions,
   importGraphDefinition,
   layoutGraph,
@@ -35,6 +36,8 @@ import {
   type GraphRecord,
 } from "@multica/core/graphs";
 import { errorCode } from "@multica/core/api/client";
+import { api } from "@multica/core/api";
+import { runtimeListOptions } from "@multica/core/runtimes";
 import {
   agentListOptions,
   memberListOptions,
@@ -51,6 +54,8 @@ import { useT } from "../i18n";
 import { GraphValueView } from "./graph-result-view";
 import { Field, GraphError, useGraphActor, useGraphCommandKey } from "./shared";
 import { GraphAiComposer } from "./graph-ai-composer";
+import { GraphAiSetupPanel } from "./graph-ai-setup-panel";
+import { GraphAiWorkspace } from "./graph-ai-workspace";
 import { GraphCanvas, useGraphNodeLabels } from "./graph-canvas";
 import { GraphNodeInspector } from "./graph-node-inspector";
 import { GraphSchemaBuilder } from "./graph-schema-fields";
@@ -70,8 +75,8 @@ function blankDefinition(name = ""): GraphDefinition {
           inputs: { context: { source: "run_input", path: "" } },
           outputSchema: objectSchema,
           executionMode: "none",
-          maxAttempts: 2,
-          timeoutSeconds: 3600,
+          maxAttempts: 16,
+          timeoutSeconds: 21600,
         },
       ],
       "",
@@ -131,7 +136,7 @@ function newNode(type: string, nodeKey: string): GraphNodeDefinition {
         outputSchema: objectSchema,
         loop: {
           body: emptyBody(nodeKey),
-          maxIterations: 3,
+          maxIterations: 16,
           condition: {
             op: "eq",
             left: { source: "constant", value: false },
@@ -213,7 +218,8 @@ export function GraphEditor({
     navigation = useNavigation(),
     paths = useWorkspacePaths();
   const agents = useQuery(agentListOptions(wsId)),
-    members = useQuery(memberListOptions(wsId));
+    members = useQuery(memberListOptions(wsId)),
+    runtimes = useQuery(runtimeListOptions(wsId));
   const generationOptions = useQuery(graphGenerationOptions(wsId));
   const generate = useGenerateGraph(wsId),
     save = useSaveGraph(wsId),
@@ -235,8 +241,11 @@ export function GraphEditor({
   const [mode, setMode] = useState<"ai" | "editor">(graph ? "editor" : "ai");
   const [localError, setLocalError] = useState<Error | null>(null),
     [definitionJSON, setDefinitionJSON] = useState("");
+  // Only the legacy path still owns a request: it is one prompt, one answer,
+  // and an agent the user names, so it keeps its own small state. The chat path
+  // keeps all of it in the conversation, on the server.
   const [prompt, setPrompt] = useState(""),
-    [generationAgentId, setGenerationAgentId] = useState(""),
+    [generationDefaultAgentId, setGenerationDefaultAgentId] = useState(""),
     [generationApproverId, setGenerationApproverId] = useState("");
   const [messages, setMessages] = useState<
     NonNullable<GraphGenerationRequest["messages"]>
@@ -272,12 +281,15 @@ export function GraphEditor({
         (node) => node.nodeKey === key,
       )?.type === "loop",
   );
-  const generationAgents = (agents.data ?? []).filter(
-    (agent) => !agent.archived_at,
+  const generationAgents = useMemo(
+    () => (agents.data ?? []).filter((agent) => !agent.archived_at),
+    [agents.data],
   );
-  const selectedGenerationAgent =
-    generationAgentId ||
-    (generationAgents.length === 1 ? generationAgents[0]!.id : "");
+  const generationMode = graphGenerationMode(generationOptions.data);
+  // The chat path is the only one this build authors with; the legacy path is
+  // what remains for a deployment whose server has no builder at all, and it
+  // still names a single agent for its one request.
+  const chatAuthoring = mode === "ai" && generationMode === "builder";
   const selectedGenerationApprover =
     generationApproverId ||
     (members.data?.some((member) => member.id === actor.memberId)
@@ -302,6 +314,13 @@ export function GraphEditor({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [draft?.dirty, draft?.storageError, draft?.storageConflict]);
+  // A workspace with exactly one agent preselects it for the legacy request;
+  // with more than one the choice belongs to the user.
+  useEffect(() => {
+    if (generationAgents.length !== 1) return;
+    const only = generationAgents[0]!.id;
+    setGenerationDefaultAgentId((current) => current || only);
+  }, [generationAgents]);
   const change = (next: GraphDefinition) => {
     useGraphDraftStore.getState().edit(draftKey, next);
     validate.reset();
@@ -312,6 +331,12 @@ export function GraphEditor({
     change(replaceScope(definition, scopePath, { ...next, schemaVersion: 2 }));
   async function saveDraft() {
     if (disabled || draft?.conflict || draft?.storageConflict) return;
+    // Read before `saved`, which clears the draft document this comes from.
+    // The conversation that designed a new graph is retired with it: the draft
+    // key follows the graph to `:<id>` from here on, so a session left running
+    // would be one nothing points at. Best-effort — the graph is about to be
+    // committed, and cleanup failing must not turn that into a retryable error.
+    const designedBy = !graph ? (draft?.ai?.sessionId ?? null) : null;
     try {
       const request = {
         definition,
@@ -325,6 +350,14 @@ export function GraphEditor({
       useGraphDraftStore
         .getState()
         .saved(draftKey, definition, result.revision);
+      if (designedBy) {
+        try {
+          await api.setChatSessionArchived(designedBy, true);
+        } catch {
+          // Archived, not deleted, would have been tidier; a failed archive
+          // leaves a listed conversation the user can discard by hand.
+        }
+      }
       validate.reset();
       toast.success(t(($) => $.page.saved));
       if (!graph) navigation.replace(paths.graphDetail(result.id));
@@ -333,8 +366,7 @@ export function GraphEditor({
     }
   }
   async function generateProposal() {
-    if (generating || disabled || generationOptions.data?.enabled !== true)
-      return;
+    if (generating || disabled || generationMode !== "legacy") return;
     setGenerating(true);
     setLocalError(null);
     const current =
@@ -347,7 +379,7 @@ export function GraphEditor({
       ].slice(-20);
       const result = await generate.mutateAsync({
         prompt: prompt.trim(),
-        agentId: selectedGenerationAgent,
+        agentId: generationDefaultAgentId,
         approverId: selectedGenerationApprover,
         ...(current.name.trim() || draft?.dirty
           ? { currentDefinition: current }
@@ -469,7 +501,13 @@ export function GraphEditor({
         }
       }}
     >
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* The chat workspace is two panels that each own their own scrolling, so
+          in that one mode this column stops being the page scroller. */}
+      <div
+        className={`min-h-0 flex-1 ${
+          chatAuthoring ? "flex flex-col overflow-hidden" : "overflow-auto"
+        }`}
+      >
         <div className="space-y-2 px-5 pt-4">
           <GraphError
             error={
@@ -543,43 +581,83 @@ export function GraphEditor({
           )}
         </div>
         {mode === "ai" ? (
-          <>
-            <GraphAiComposer
-              prompt={prompt}
-              onPromptChange={setPrompt}
-              agentId={selectedGenerationAgent}
-              onAgentChange={setGenerationAgentId}
-              approverId={selectedGenerationApprover}
-              onApproverChange={setGenerationApproverId}
-              agents={generationAgents}
-              members={members.data ?? []}
-              enabled={generationOptions.data?.enabled === true && !disabled}
-              loading={generationOptions.isPending}
-              pending={generating}
-              hasDraft={Boolean(definition.name.trim())}
-              onGenerate={() => void generateProposal()}
-              onManual={() => setMode("editor")}
-            />
-            {messages.length > 0 && (
-              <section className="mx-auto mb-5 max-w-5xl space-y-3 px-5">
-                <h3 className="text-body font-semibold">
-                  {t(($) => $.production.conversation)}
-                </h3>
-                {messages.map((message, index) => (
-                  <p
-                    key={index}
-                    className={
-                      message.role === "user"
-                        ? "rounded-lg bg-muted p-3 text-body"
-                        : "px-3 text-body text-muted-foreground"
-                    }
-                  >
-                    {message.content}
-                  </p>
-                ))}
-              </section>
-            )}
-          </>
+          generationMode === "builder" ? (
+            draft?.ai ? (
+              // Keyed by the conversation: everything inside — which reply has
+              // been merged, the composer, the encoded context — belongs to one
+              // session, so a new one has to be a remount.
+              <GraphAiWorkspace
+                key={draft.ai.sessionId}
+                draftKey={draftKey}
+                ai={draft.ai}
+                definition={definition}
+                agents={generationAgents}
+                runtimes={runtimes.data ?? []}
+                currentUserId={actor.userId}
+                canUndo={Boolean(draft.past.length)}
+                onApplyDefinition={change}
+                onOpenEditor={() => {
+                  setMode("editor");
+                  setScopePath([]);
+                  setSelectedKey("start");
+                }}
+                onMissing={() =>
+                  useGraphDraftStore.getState().clearAi(draftKey)
+                }
+              />
+            ) : (
+              <GraphAiSetupPanel
+                draftKey={draftKey}
+                agents={generationAgents}
+                runtimes={runtimes.data ?? []}
+                members={members.data ?? []}
+                currentUserId={actor.userId}
+                memberId={actor.memberId ?? null}
+                disabled={disabled}
+                onManual={() => setMode("editor")}
+              />
+            )
+          ) : (
+            <>
+              <GraphAiComposer
+                prompt={prompt}
+                onPromptChange={setPrompt}
+                mode={generationMode}
+                defaultAgentId={generationDefaultAgentId}
+                onDefaultAgentChange={setGenerationDefaultAgentId}
+                approverId={selectedGenerationApprover}
+                onApproverChange={setGenerationApproverId}
+                agents={generationAgents}
+                members={members.data ?? []}
+                loading={generationOptions.isPending}
+                disabled={disabled}
+                pending={generating}
+                error={generate.error}
+                hasDraft={Boolean(definition.name.trim())}
+                onGenerate={() => void generateProposal()}
+                onManual={() => setMode("editor")}
+              />
+              {messages.length > 0 && (
+                <section className="mx-auto mb-5 max-w-5xl space-y-3 px-5">
+                  <h3 className="text-body font-semibold">
+                    {t(($) => $.production.conversation)}
+                  </h3>
+                  {messages.map((message, index) => (
+                    <p
+                      key={index}
+                      className={
+                        message.role === "user"
+                          ? "rounded-lg bg-muted p-3 text-body"
+                          : "px-3 text-body text-muted-foreground"
+                      }
+                    >
+                      {message.content}
+                    </p>
+                  ))}
+                </section>
+              )}
+            </>
+          )
         ) : (
           <div className="space-y-5 px-5 py-5">
             <div className="flex flex-wrap items-center gap-3">

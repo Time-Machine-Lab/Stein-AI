@@ -157,7 +157,21 @@ type GraphNodeRunRecord struct {
 	CanRetry             bool                    `json:"can_retry"`
 	CanResolveBlock      bool                    `json:"can_resolve_block"`
 	NextAttemptAt        *time.Time              `json:"next_attempt_at,omitempty"`
+	// GrantedAttempts counts the attempts people authorized by clearing this
+	// node's block once the published budget was already spent. They sit outside
+	// MaxAttempts, which bounds the agent's own repeats: a person deciding the
+	// node should continue is not the agent repeating itself, and must not be
+	// refused by a budget the platform picked for the agent.
+	GrantedAttempts int `json:"granted_attempts,omitempty"`
+	// HumanNote is the latest instruction a person left while clearing this
+	// node's block. The next attempt receives it and clears it, because a node's
+	// frozen input never changes.
+	HumanNote *graph.HumanNote `json:"human_note,omitempty"`
 }
+
+// attemptBudget is the highest attempt number this node may reach: the published
+// max_attempts plus the ones people granted by clearing a block.
+func (n GraphNodeRunRecord) attemptBudget() int { return n.MaxAttempts + n.GrantedAttempts }
 type GraphAttemptRecord struct {
 	TaskID       string                `json:"task_id"`
 	AttemptNo    int                   `json:"attempt_no"`
@@ -544,23 +558,70 @@ func graphFinish(run *GraphRunRecord, state, reason string) {
 	}
 	graphEvent(run, "run."+state, "", reason)
 }
+// graphRetryAllowed reports whether a blocked node may take another attempt on
+// its published budget. This is the gate for the agent's own repeats, so it is
+// where max_attempts applies.
 func graphRetryAllowed(node GraphNodeRunRecord) error {
+	return graphUnblockAllowed(node, false)
+}
+
+// graphResolveBlockAllowed reports whether a person may clear a blocked node.
+//
+// People are deliberately not bound by the attempt budget. max_attempts bounds
+// how often the agent repeats by itself; clearing a block is a human decision
+// about a node the agent has stopped on and asked about, and refusing it leaves
+// the run with no way forward at all - the human sees the reason form, the
+// button is gone, and no server-side path produces another attempt. The attempt
+// a person unlocks is therefore granted outside the published budget; the
+// control action records the grant before the node becomes ready again.
+func graphResolveBlockAllowed(node GraphNodeRunRecord) error {
+	return graphUnblockAllowed(node, true)
+}
+
+func graphUnblockAllowed(node GraphNodeRunRecord, human bool) error {
 	if node.AcceptedSubmissionID != "" || node.State != "blocked" {
 		return graphError("invalid_state", "only a blocked, unaccepted node can retry")
 	}
-	if len(node.Attempts) >= node.MaxAttempts {
+	if !human && len(node.Attempts) >= node.attemptBudget() {
 		return graphError("budget_exhausted", "node attempt budget exhausted")
 	}
 	if len(node.Attempts) > 0 {
 		a := node.Attempts[len(node.Attempts)-1]
-		if a.StoppedAt == nil {
-			return graphError("execution_unknown", "previous process must be confirmed stopped")
-		}
 		if a.State != "completed" && a.State != "failed" && a.State != "cancelled" {
 			return graphError("invalid_state", "previous task is not terminal")
 		}
+		// A person clearing the block supplies the missing stop themselves; see
+		// graphConfirmStoppedTx. Making the receipt a precondition here refused
+		// the one action the platform's own execution_unknown block exists to
+		// ask for, leaving the run unable to advance or even be cancelled.
+		if a.StoppedAt == nil && !human {
+			return graphError("execution_unknown", "previous process must be confirmed stopped")
+		}
 	}
 	return nil
+}
+
+// graphGrantUnblock records what a person decided when they cleared a node's
+// block, so both halves of that decision reach the attempt it unlocks.
+//
+// The attempt: when the published budget is already spent, the attempt this
+// unblocks has to be granted on top of it, or the scheduler's own budget check
+// would refuse to create it and the run would fail instead of continuing.
+//
+// The reason: a node's input is frozen for the node's whole life, so the attempt
+// that follows has no other way to learn what the person said. It rides on the
+// manifest and is cleared when that attempt is created.
+func graphGrantUnblock(n *GraphNodeRunRecord, member, reason string) {
+	if len(n.Attempts) >= n.MaxAttempts {
+		n.GrantedAttempts++
+	}
+	n.HumanNote = nil
+	// An empty reason is a legitimate unblock - the person reacted to something
+	// outside the platform - so it clears the previous note rather than
+	// replaying a stale instruction into the next attempt.
+	if note := strings.TrimSpace(reason); note != "" {
+		n.HumanNote = &graph.HumanNote{Reason: note, MemberID: member, At: time.Now().UTC()}
+	}
 }
 func graphApprovalAllowed(run GraphRunRecord, memberID string, p GraphApprovalParams) error {
 	if run.Deadline != nil && !run.Deadline.After(time.Now()) {

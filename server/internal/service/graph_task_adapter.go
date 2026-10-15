@@ -58,7 +58,7 @@ func (s *TaskService) CreateGraphTaskTx(ctx context.Context, tx pgx.Tx, p GraphT
 	if err := graphUUIDs(p.WorkspaceID, p.RunID, p.NodeRunID, p.TaskID, p.IssueID, p.AgentID, p.RuntimeID, p.InitiatorID); err != nil {
 		return task, err
 	}
-	if p.AttemptNo < 1 || p.AttemptNo > p.Manifest.NodeSpec.Node.MaxAttempts {
+	if p.AttemptNo < 1 || p.AttemptNo > p.Manifest.Ceiling() {
 		return task, graphError("budget_exhausted", "invalid Graph attempt budget")
 	}
 	var parent any
@@ -77,7 +77,7 @@ SELECT $1,$2,$3,$4,'queued',0,$5,$6,$7,$7,true,false,$8,$8,$8,'direct_human','gr
 WHERE lock_task_owner_rows($2,$4,$3) AND EXISTS(SELECT 1 FROM graph_task_attempt WHERE task_id=$1 AND workspace_id=$11 AND node_run_id=$9 AND run_id=$12)
 AND EXISTS(SELECT 1 FROM issue WHERE id=$4 AND workspace_id=$11)
 AND EXISTS(SELECT 1 FROM agent WHERE id=$2 AND workspace_id=$11)
-AND EXISTS(SELECT 1 FROM agent_runtime WHERE id=$3 AND workspace_id=$11)`, p.TaskID, p.AgentID, p.RuntimeID, p.IssueID, p.AttemptNo, p.Manifest.NodeSpec.Node.MaxAttempts, parent, p.InitiatorID, p.NodeRunID, contextJSON, p.WorkspaceID, p.RunID)
+AND EXISTS(SELECT 1 FROM agent_runtime WHERE id=$3 AND workspace_id=$11)`, p.TaskID, p.AgentID, p.RuntimeID, p.IssueID, p.AttemptNo, p.Manifest.Ceiling(), parent, p.InitiatorID, p.NodeRunID, contextJSON, p.WorkspaceID, p.RunID)
 	if err != nil {
 		return task, err
 	}

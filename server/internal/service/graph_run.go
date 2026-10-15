@@ -365,8 +365,20 @@ func (s *GraphService) Control(ctx context.Context, ws, user, id, action string,
 			if action == "retry" && len(n.Attempts) == 0 {
 				return run, graphError("attempt_missing", "resolve the block before the first attempt")
 			}
-			if err = graphRetryAllowed(*n); err != nil {
+			gate := graphRetryAllowed
+			if action == "resolve-block" {
+				gate = graphResolveBlockAllowed
+			}
+			if err = gate(*n); err != nil {
 				return run, err
+			}
+			if action == "resolve-block" {
+				if len(n.Attempts) > 0 {
+					if err = graphConfirmStoppedTx(ctx, tx, ws, &n.Attempts[len(n.Attempts)-1], user); err != nil {
+						return run, err
+					}
+				}
+				graphGrantUnblock(n, user, p.Reason)
 			}
 			n.State = "ready"
 			n.BlockReason = ""

@@ -52,11 +52,16 @@ func IsTerminalNode(state NodeState) bool {
 }
 
 type Admission struct {
-	RunState                 RunState
-	ControlState             ControlState
-	NodeState                NodeState
-	Attempts                 int
-	MaxAttempts              int
+	RunState     RunState
+	ControlState ControlState
+	NodeState    NodeState
+	Attempts     int
+	MaxAttempts  int
+	// Granted counts the attempts people authorized beyond MaxAttempts by
+	// clearing a blocked node. They are not the agent's own repeats, so they do
+	// not consume the published budget; nor do they raise it, because each one
+	// costs a person an explicit decision.
+	Granted                  int
 	PreviousExecutionStopped bool
 	OutputAccepted           bool
 	Authorized               bool
@@ -87,7 +92,7 @@ func CanSchedule(a Admission) error {
 	if a.OutputAccepted {
 		return denied("output_accepted", "accepted output cannot be replaced")
 	}
-	if a.MaxAttempts < 1 || a.MaxAttempts > 3 || a.Attempts < 0 || a.Attempts >= a.MaxAttempts {
+	if a.MaxAttempts < 1 || a.Granted < 0 || a.Attempts < 0 || a.Attempts >= a.MaxAttempts+a.Granted {
 		return denied("budget_exhausted", "no attempt budget remains")
 	}
 	if a.Attempts > 0 && !a.PreviousExecutionStopped {
@@ -123,7 +128,7 @@ func CanStart(a Admission) error {
 	if a.NodeState != NodeActive || a.OutputAccepted {
 		return denied("stale_attempt", "node does not own an active attempt")
 	}
-	if a.Attempts < 1 || a.MaxAttempts < 1 || a.MaxAttempts > 3 || a.Attempts > a.MaxAttempts {
+	if a.Attempts < 1 || a.MaxAttempts < 1 || a.Granted < 0 || a.Attempts > a.MaxAttempts+a.Granted {
 		return denied("budget_exhausted", "attempt is outside the published budget")
 	}
 	return nil
@@ -179,6 +184,9 @@ type Completion struct {
 	Retryable        bool
 	Attempts         int
 	MaxAttempts      int
+	// Granted counts the attempts people authorized beyond MaxAttempts; see
+	// Admission.Granted.
+	Granted int
 }
 
 // Decision is persisted by the service together with any durable scheduling intent.
@@ -213,7 +221,7 @@ func DecideCompletion(c Completion) Decision {
 		return blocked("external_interrupt")
 	}
 	if c.TaskState == "failed" {
-		if c.MaxAttempts < 1 || c.MaxAttempts > 3 || c.Attempts < 1 || c.Attempts >= c.MaxAttempts {
+		if c.MaxAttempts < 1 || c.Granted < 0 || c.Attempts < 1 || c.Attempts >= c.MaxAttempts+c.Granted {
 			return Decision{NodeState: NodeFailed, RunState: RunFailed, Reason: "budget_exhausted"}
 		}
 		if c.Retryable {

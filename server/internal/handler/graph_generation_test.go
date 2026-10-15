@@ -74,7 +74,11 @@ func TestGraphGenerationUnavailableAndMembership(t *testing.T) {
 	api := graphGenerationAPI(t, newGraphGenerationTestHandler(t, ""))
 	w := httptest.NewRecorder()
 	api.GetGraphGenerationOptions(w, newRequest(http.MethodGet, "/api/graphs/generation-options", nil))
-	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"enabled":false}` {
+	// builder_enabled is advertised unconditionally: the chat-based path needs no
+	// server model provider, only a reachable runtime, so it is available even
+	// here. enabled stays tied to the legacy server-model path. encoding/json
+	// sorts map keys, so the exact body is deterministic.
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"builder_enabled":true,"enabled":false}` {
 		t.Fatalf("availability: %d %s", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()

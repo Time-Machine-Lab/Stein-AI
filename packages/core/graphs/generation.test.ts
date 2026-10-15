@@ -117,6 +117,7 @@ describe("Graph generation API", () => {
       respond(body);
       expect(await new ApiClient("").getGraphGenerationOptions()).toEqual({
         enabled: false,
+        builderEnabled: false,
       });
     },
   );
@@ -125,10 +126,23 @@ describe("Graph generation API", () => {
     respond({ enabled: true });
     expect(await new ApiClient("").getGraphGenerationOptions()).toEqual({
       enabled: true,
+      builderEnabled: false,
     });
     expect(graphGenerationOptions("a").queryKey).not.toEqual(
       graphGenerationOptions("b").queryKey,
     );
     expect(graphGenerationOptions("").enabled).toBe(false);
+  });
+
+  it.each([
+    [{ builder_enabled: true }, { enabled: false, builderEnabled: true }],
+    [
+      { enabled: true, builder_enabled: true },
+      { enabled: true, builderEnabled: true },
+    ],
+    [{ enabled: "true" }, { enabled: false, builderEnabled: false }],
+  ])("folds the two availability signals of %j", async (body, expected) => {
+    respond(body);
+    expect(await new ApiClient("").getGraphGenerationOptions()).toEqual(expected);
   });
 });

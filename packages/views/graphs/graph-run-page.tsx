@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import {
   canApproveGraphRun,
   canManageGraphRun,
   canReplaceGraphApprover,
+  graphControlState,
   graphNodeTasksOptions,
   graphRunActions,
   graphRunOptions,
@@ -24,7 +25,10 @@ import {
   type GraphRunAction,
   type GraphApproval,
   type GraphNodeDefinition,
+  type GraphRepositoryOption,
+  type JsonObject,
 } from "@multica/core/graphs";
+import type { MemberWithUser } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -56,12 +60,87 @@ import {
 import { GraphCanvas } from "./graph-canvas";
 import { GraphArtifactCards, GraphValueView } from "./graph-result-view";
 
-function NodeTimeline({
+// States worth opening a run page on, most urgent first. A run that is live,
+// stuck, or failed is what the reader came for.
+const FOCUS_STATES = [
+  "running",
+  "waiting_approval",
+  "blocked",
+  "failed",
+  "queued",
+  "dispatched",
+  "started",
+  "retry_wait",
+];
+
+// Field names an agent reaches for when it means "here is the answer". Preferred
+// over whatever key happens to come first, so a node box shows its conclusion
+// rather than its opening sentence.
+const SUMMARY_KEYS = ["conclusion", "summary", "verdict", "topic", "title"];
+
+function firstText(value: unknown, depth = 0): string {
+  if (typeof value === "string") return value;
+  if (depth > 4 || !value || typeof value !== "object") return "";
+  if (Array.isArray(value)) return "";
+  const entries = Object.entries(value as JsonObject);
+  for (const key of SUMMARY_KEYS) {
+    const match = entries.find(([name]) => name === key);
+    if (match) {
+      const text = firstText(match[1], depth + 1);
+      if (text) return text;
+    }
+  }
+  for (const [, item] of entries) {
+    const text = firstText(item, depth + 1);
+    if (text) return text;
+  }
+  return "";
+}
+
+/** What a node produced, in one line, for the node box on the flow. */
+function nodeDetail(node: GraphNodeRun): string {
+  return firstText(node.output).replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function focusNodeId(nodes: GraphNodeRun[]): string {
+  for (const state of FOCUS_STATES) {
+    const match = nodes.find((node) => node.state === state);
+    if (match) return match.id;
+  }
+  // Nothing needs attention: open the node that produced the result. Run output
+  // comes from the last node that wrote one, not from the synthetic end node,
+  // so the reader lands on the answer instead of an empty box.
+  return (
+    (nodes.filter((node) => node.output).at(-1) ?? nodes.at(-1))?.id ?? ""
+  );
+}
+
+/** Appendix blocks of the rail: labelled, closed, out of the reading path. */
+function RailDetails({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="min-w-0 rounded-xl border bg-card">
+      <summary className="cursor-pointer px-4 py-3 text-body font-medium">
+        {label}
+      </summary>
+      <div className="min-w-0 space-y-3 px-4 pb-4">{children}</div>
+    </details>
+  );
+}
+
+function NodeDetail({
   wsId,
   node,
   definition,
   canManage,
   pending,
+  reason,
+  onReasonChange,
   onAction,
 }: {
   wsId: string;
@@ -69,38 +148,55 @@ function NodeTimeline({
   definition?: GraphNodeDefinition;
   canManage: boolean;
   pending: boolean;
+  reason: string;
+  onReasonChange: (reason: string) => void;
   onAction: (action: GraphRunAction, nodeRunId?: string) => void;
 }) {
   const { t } = useT("graphs");
   const paths = useWorkspacePaths();
   const tasks = useQuery(graphNodeTasksOptions(wsId, node.issueId ?? ""));
   return (
-    <li
+    <section
       id={`graph-node-${node.id}`}
-      className="min-w-0 space-y-4 rounded-xl border p-4"
+      data-testid="node-detail"
+      className="min-w-0 space-y-3 rounded-xl border bg-card p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="min-w-0 flex-1 break-all font-medium">
+        <h2 className="min-w-0 flex-1 break-all text-body font-semibold">
           {node.label || definition?.label || node.nodeKey}
-        </h3>
+        </h2>
         <GraphState state={node.state} />
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted-foreground">
         {node.issueId && (
           <AppLink
             href={paths.issueDetail(node.issueId)}
-            className="text-caption underline underline-offset-4"
+            className="underline underline-offset-4"
           >
             {t(($) => $.run.node_issue)}
           </AppLink>
         )}
+        {["agent", "script"].includes(node.nodeType) && (
+          <span>
+            {t(($) => $.run.attempts, {
+              used: node.attempts.length,
+              max: node.maxAttempts + node.grantedAttempts,
+            })}
+          </span>
+        )}
+        {node.iteration && (
+          <span>
+            {t(($) => $.production.iteration)} {node.iteration}
+          </span>
+        )}
+        {node.selectedPort && (
+          <span className="font-medium text-foreground">
+            {node.selectedPort === "true"
+              ? t(($) => $.production.true_path)
+              : t(($) => $.production.false_path)}
+          </span>
+        )}
       </div>
-      {["agent", "script"].includes(node.nodeType) && (
-        <p className="text-caption text-muted-foreground">
-          {t(($) => $.run.attempts, {
-            used: node.attempts.length,
-            max: node.maxAttempts,
-          })}
-        </p>
-      )}
       {node.blockReason && (
         <p role="status" className="break-words text-body text-destructive">
           {node.blockReason === "execution_unknown"
@@ -108,27 +204,89 @@ function NodeTimeline({
             : node.blockReason}
         </p>
       )}
-      {node.iteration && (
-        <p className="text-caption text-muted-foreground">
-          {t(($) => $.production.iteration)} {node.iteration}
-        </p>
+      {node.output && (
+        <section className="space-y-2">
+          <h3 className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.production.output)}
+          </h3>
+          <GraphValueView
+            value={node.output}
+            schema={definition?.outputSchema}
+          />
+        </section>
       )}
-      {node.selectedPort && (
-        <p className="text-caption font-medium">
-          {node.selectedPort === "true"
-            ? t(($) => $.production.true_path)
-            : t(($) => $.production.false_path)}
-        </p>
-      )}
-      {Object.keys(node.input).length > 0 && (
-        <details className="rounded-lg border p-3">
-          <summary className="cursor-pointer text-body font-medium">
-            {t(($) => $.run.input)}
-          </summary>
-          <div className="mt-3">
-            <GraphValueView value={node.input} />
+      {node.submissions.map((submission, index) => {
+        const result = asSchema(submission.result);
+        return (
+          <section
+            key={String(submission.id ?? index)}
+            className="space-y-3 rounded-lg border p-3"
+          >
+            <div className="flex items-center gap-2">
+              <h3 className="flex-1 text-body font-medium">
+                {t(($) => $.production.results)}
+              </h3>
+              {typeof result.outcome === "string" && (
+                <GraphState state={result.outcome} />
+              )}
+            </div>
+            {!node.output && result.output !== undefined && (
+              <GraphValueView
+                value={result.output}
+                schema={definition?.outputSchema}
+              />
+            )}
+            {result.diagnostics !== undefined && (
+              <GraphValueView value={result.diagnostics} />
+            )}
+            {Array.isArray(result.artifacts) && (
+              <GraphArtifactCards artifacts={result.artifacts.map(asSchema)} />
+            )}
+            <JsonDetails
+              label={t(($) => $.production.raw_details)}
+              value={submission}
+            />
+          </section>
+        );
+      })}
+      {canManage && node.state === "blocked" && (
+        <div className="space-y-3 rounded-lg border p-3">
+          <Field label={t(($) => $.run.reason)}>
+            {(id) => (
+              <Textarea
+                id={id}
+                value={reason}
+                onChange={(event) => onReasonChange(event.target.value)}
+                placeholder={t(($) => $.run.reason_placeholder)}
+                disabled={pending}
+              />
+            )}
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            {nodeCanRetry(node) && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => onAction("retry", node.id)}
+              >
+                {node.nodeType === "http"
+                  ? t(($) => $.production.http_retry)
+                  : t(($) => $.run.retry)}
+              </Button>
+            )}
+            {node.nodeType !== "http" && node.canResolveBlock === true && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => onAction("resolve-block", node.id)}
+              >
+                {t(($) => $.run.resolve_block)}
+              </Button>
+            )}
           </div>
-        </details>
+        </div>
       )}
       {node.attempts.map((attempt) => {
         const task = tasks.data?.find(
@@ -143,7 +301,7 @@ function NodeTimeline({
               <span className="min-w-0 flex-1 text-caption">
                 {t(($) => $.run.attempts, {
                   used: attempt.attemptNo,
-                  max: node.maxAttempts,
+                  max: node.maxAttempts + node.grantedAttempts,
                 })}
               </span>
               <GraphState state={attempt.state} />
@@ -169,76 +327,172 @@ function NodeTimeline({
           </div>
         );
       })}
-      {node.output && (
-        <section className="space-y-3">
-          <h4 className="text-body font-medium">
-            {t(($) => $.production.output)}
-          </h4>
-          <GraphValueView
-            value={node.output}
-            schema={definition?.outputSchema}
-          />
-        </section>
+      {Object.keys(node.input).length > 0 && (
+        <details className="min-w-0 rounded-lg border p-3">
+          <summary className="cursor-pointer text-body font-medium">
+            {t(($) => $.run.input)}
+          </summary>
+          <div className="mt-3">
+            <GraphValueView value={node.input} />
+          </div>
+        </details>
       )}
-      {node.submissions.map((submission, index) => {
-        const result = asSchema(submission.result);
-        return (
-          <section
-            key={String(submission.id ?? index)}
-            className="space-y-3 rounded-lg border p-3"
-          >
-            <div className="flex items-center gap-2">
-              <h4 className="flex-1 text-body font-medium">
-                {t(($) => $.production.results)}
-              </h4>
-              {typeof result.outcome === "string" && (
-                <GraphState state={result.outcome} />
-              )}
-            </div>
-            {!node.output && result.output !== undefined && (
-              <GraphValueView
-                value={result.output}
-                schema={definition?.outputSchema}
+    </section>
+  );
+}
+
+function ApprovalCard({
+  run,
+  gate,
+  members,
+  repositories,
+  canDecide,
+  canReplace,
+  pending,
+  reason,
+  onReasonChange,
+  onDecide,
+  onReplace,
+}: {
+  run: GraphRun;
+  gate: GraphApproval;
+  members: MemberWithUser[];
+  repositories: GraphRepositoryOption[];
+  canDecide: boolean;
+  canReplace: boolean;
+  pending: boolean;
+  reason: string;
+  onReasonChange: (reason: string) => void;
+  onDecide: (gate: GraphApproval, decision: "approved" | "rejected") => void;
+  onReplace: (gate: GraphApproval, previousApproverId: string) => void;
+}) {
+  const { t } = useT("graphs");
+  return (
+    <section className="space-y-4 rounded-xl border bg-card p-4">
+      <div className="flex items-center gap-2">
+        <h2 className="flex-1 text-title font-medium">
+          {(run.nodes.find((node) => node.id === gate.nodeRunId)?.label ||
+            run.nodes.find((node) => node.id === gate.nodeRunId)?.nodeKey) ??
+            t(($) => $.run.approval)}
+        </h2>
+        <GraphState state={gate.state} />
+      </div>
+      <p className="text-body text-muted-foreground">
+        {t(($) => $.run.approval_help)}
+      </p>
+      {gate.candidate && (
+        // While a gate is open the evidence is the thing being judged, so it is
+        // already open. Once decided it is a record, and every node's output
+        // unfolded would be the longest block on the page.
+        <details
+          open={gate.state === "pending"}
+          className="min-w-0 rounded-lg bg-muted/20"
+        >
+          <summary className="cursor-pointer px-4 py-3 text-body font-medium">
+            {t(($) => $.production.evidence)}
+          </summary>
+          <div className="min-w-0 space-y-4 px-4 pb-4">
+            <GraphValueView
+              value={gate.candidate.outputs ?? gate.candidate.inputs}
+              schema={{
+                properties: Object.fromEntries(
+                  run.nodes.map((node) => [
+                    node.nodeKey,
+                    {
+                      title: node.label || node.nodeKey,
+                      ...run.definition?.nodes.find(
+                        (item) => item.nodeKey === node.nodeKey,
+                      )?.outputSchema,
+                    },
+                  ]),
+                ),
+              }}
+            />
+            {Array.isArray(gate.candidate.artifacts) && (
+              <GraphArtifactCards
+                artifacts={gate.candidate.artifacts.map(asSchema)}
+                repositories={repositories}
               />
             )}
-            {result.diagnostics !== undefined && (
-              <GraphValueView value={result.diagnostics} />
-            )}
-            {Array.isArray(result.artifacts) && (
-              <GraphArtifactCards artifacts={result.artifacts.map(asSchema)} />
-            )}
-            <JsonDetails
-              label={t(($) => $.production.raw_details)}
-              value={submission}
-            />
-          </section>
-        );
-      })}
-      {canManage && node.state === "blocked" && (
-        <div className="flex flex-wrap gap-2">
-          {nodeCanRetry(node) && (
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => onAction("retry", node.id)}
-            >
-              {node.nodeType === "http"
-                ? t(($) => $.production.http_retry)
-                : t(($) => $.run.retry)}
-            </Button>
-          )}
-          {node.nodeType !== "http" && node.canResolveBlock === true && (
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => onAction("resolve-block", node.id)}
-            >
-              {t(($) => $.run.resolve_block)}
-            </Button>
-          )}
-        </div>
+          </div>
+        </details>
       )}
-    </li>
+      <div className="space-y-2">
+        {(gate.approverIds?.length ? gate.approverIds : [gate.approverId]).map(
+          (memberId) => {
+            const vote = gate.decisions?.find(
+              (decision) => decision.memberId === memberId,
+            );
+            return (
+              <div key={memberId} className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1 text-body">
+                  {members.find((member) => member.id === memberId)?.name ??
+                    memberId}
+                </span>
+                {vote && <GraphState state={vote.decision} />}
+                {canReplace && gate.state === "pending" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onReplace(gate, memberId)}
+                  >
+                    {t(($) => $.run.replace_approver)}
+                  </Button>
+                )}
+                {vote?.reason && (
+                  <p className="w-full text-caption text-muted-foreground">
+                    {vote.reason}
+                  </p>
+                )}
+              </div>
+            );
+          },
+        )}
+      </div>
+      {canDecide ? (
+        <div className="space-y-3">
+          <Field label={t(($) => $.run.reason)}>
+            {(id) => (
+              <Textarea
+                id={id}
+                value={reason}
+                onChange={(event) => onReasonChange(event.target.value)}
+                placeholder={t(($) => $.run.reason_placeholder)}
+                disabled={pending}
+              />
+            )}
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={pending} onClick={() => onDecide(gate, "approved")}>
+              {t(($) => $.run.approve)}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={pending || !reason.trim()}
+              onClick={() => onDecide(gate, "rejected")}
+            >
+              {t(($) => $.run.reject)}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        gate.state === "pending" && (
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.run.approval_waiting)}
+          </p>
+        )
+      )}
+      <JsonDetails
+        label={t(($) => $.production.raw_details)}
+        value={{
+          id: gate.id,
+          candidate_digest: gate.candidateDigest,
+          policy: gate.mode,
+          quorum: gate.quorum,
+          candidate: gate.candidate,
+        }}
+      />
+    </section>
   );
 }
 
@@ -256,6 +510,8 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
   const [httpRetry, setHttpRetry] = useState<GraphNodeRun | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [selectedScope, setSelectedScope] = useState("");
+  const [selectedNodeId, setSelectedNodeId] = useState("");
+  const [narrowPane, setNarrowPane] = useState<"flow" | "details">("flow");
   const [replacement, setReplacement] = useState<{
     approval: GraphApproval;
     previousApproverId: string;
@@ -264,6 +520,7 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
   const pending =
     control.isPending || approval.isPending || replaceApprover.isPending;
   const actions = graphRunActions(run, actor);
+  const controlState = graphControlState(run);
   const actionLabels: Record<GraphRunAction, string> = {
     pause: t(($) => $.run.pause),
     resume: t(($) => $.run.resume),
@@ -317,6 +574,10 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
     : run.approval
       ? [run.approval]
       : [];
+  // A pending gate blocks the run, so it belongs above the flow where nothing
+  // can hide it. A decided gate is history and belongs with the rest of it.
+  const pendingGates = gates.filter((gate) => gate.state === "pending");
+  const settledGates = gates.filter((gate) => gate.state !== "pending");
   const pendingForActor = new Set(
     graphPendingApprovals(run, actor.memberId).map((gate) => gate.id),
   );
@@ -343,97 +604,23 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
     );
     visibleDefinition = node?.loop?.body ?? node?.subgraph?.definition;
   }
-  return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <GraphError
-        error={control.error ?? approval.error ?? replaceApprover.error}
-      />
-      <div className="flex flex-wrap items-center gap-3">
-        <AppLink
-          href={paths.issueDetail(run.rootIssueId)}
-          className="text-body underline underline-offset-4"
-        >
-          {t(($) => $.run.parent)}
-        </AppLink>
-        <GraphState state={run.state} />
-        <GraphState state={run.controlState} />
-        <span className="text-caption text-muted-foreground">
-          {t(($) => $.page.revision, { revision: run.revision })}
-        </span>
-      </div>
-      {run.graphName && (
-        <h1 className="text-title-lg font-semibold">{run.graphName}</h1>
-      )}
-      {run.previousRunId && (
-        <AppLink
-          href={paths.graphRun(run.previousRunId)}
-          className="text-caption underline underline-offset-4"
-        >
-          {t(($) => $.production.previous_run)}
-        </AppLink>
-      )}
-      {run.blockReason && (
-        <p role="status" className="text-body text-destructive">
-          {run.blockReason}
-        </p>
-      )}
-      {run.controlState === "cancel_requested" && (
-        <p role="status" className="text-body text-muted-foreground">
-          {t(($) => $.run.cancel_pending)}
-        </p>
-      )}
-      <div className="flex flex-wrap gap-2">
-        {actions.map((action) => (
-          <Button
-            key={action}
-            variant={action === "cancel" ? "destructive" : "outline"}
-            disabled={pending}
-            onClick={() =>
-              action === "cancel" ? setConfirmCancel(true) : act(action)
-            }
-          >
-            {actionLabels[action]}
-          </Button>
-        ))}
-      </div>
-      {run.graphId &&
-        GRAPH_TERMINAL_STATES.has(run.state) &&
-        canManageGraphRun(run, actor) && (
-          <AppLink
-            href={`${paths.graphDetail(run.graphId)}?issue=${encodeURIComponent(run.rootIssueId)}&previous_run=${encodeURIComponent(run.id)}`}
-            className="inline-flex rounded-md border px-3 py-2 text-body font-medium hover:bg-accent"
-          >
-            {t(($) => $.production.rework)}
-          </AppLink>
-        )}
-      {!actions.length && !canApproveGraphRun(run, actor) && (
-        <p className="text-caption text-muted-foreground">
-          {t(($) => $.run.no_controls)}
-        </p>
-      )}
-      {(canManageGraphRun(run, actor) || canApproveGraphRun(run, actor)) && (
-        <Field label={t(($) => $.run.reason)}>
-          {(id) => (
-            <Textarea
-              id={id}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder={t(($) => $.run.reason_placeholder)}
-            />
-          )}
-        </Field>
-      )}
-      <details className="rounded-xl border p-4">
-        <summary className="cursor-pointer text-body font-medium">
-          {t(($) => $.run.input)}
-        </summary>
-        <div className="mt-3">
-          <GraphValueView
-            value={run.input}
-            schema={run.definition?.inputSchema}
-          />
-        </div>
-      </details>
+  // Derive the selection instead of storing it: when the scope changes to one
+  // that does not contain the selected node, this falls back to the node the
+  // run page should be showing anyway.
+  const selectedNode =
+    visibleNodes.find((node) => node.id === selectedNodeId) ??
+    visibleNodes.find((node) => node.id === focusNodeId(visibleNodes));
+  const selectedDefinition = selectedNode
+    ? visibleDefinition?.nodes.find(
+        (item) => item.nodeKey === selectedNode.nodeKey,
+      )
+    : undefined;
+
+  const flowPane = (
+    <div
+      data-testid="run-flow"
+      className={`${narrowPane === "flow" ? "flex" : "hidden xl:flex"} min-h-0 min-w-0 flex-col gap-3`}
+    >
       {scopes.length > 1 && (
         <Field label={t(($) => $.production.scope)}>
           {(id) => (
@@ -456,205 +643,131 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
           )}
         </Field>
       )}
-      {visibleDefinition && (
-        <details className="rounded-xl border p-4">
-          <summary className="cursor-pointer text-body font-medium">
-            {t(($) => $.studio.flow)}
-          </summary>
-          <div className="mt-3">
-            <GraphCanvas
-              key={currentScopeId}
-              definition={visibleDefinition}
-              disabled
-              states={Object.fromEntries(
-                visibleNodes.map((node) => [node.nodeKey, node.state]),
-              )}
-              onSelect={(key) =>
-                document
-                  .getElementById(
-                    `graph-node-${visibleNodes.find((node) => node.nodeKey === key)?.id}`,
-                  )
-                  ?.scrollIntoView({ behavior: "smooth", block: "center" })
-              }
-            />
-          </div>
-        </details>
-      )}
-      <section className="space-y-3">
-        <h2 className="text-title font-medium">{t(($) => $.run.nodes)}</h2>
-        <ol className="space-y-4">
-          {visibleNodes.map((node) => (
-            <NodeTimeline
-              key={node.id}
-              wsId={wsId}
-              node={node}
-              definition={visibleDefinition?.nodes.find(
-                (item) => item.nodeKey === node.nodeKey,
-              )}
-              canManage={
-                !run.archivedAt &&
-                canManageGraphRun(run, actor) &&
-                run.controlState === "run" &&
-                run.state === "blocked"
-              }
-              pending={pending}
-              onAction={(action, nodeId) => {
-                if (node.nodeType === "http" && action === "retry") {
-                  setReason("");
-                  setHttpRetry(node);
-                } else act(action, nodeId);
-              }}
-            />
-          ))}
-        </ol>
-      </section>
-      {run.artifacts.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-title font-medium">
-            {t(($) => $.run.artifacts)}
-          </h2>
-          <GraphArtifactCards
-            artifacts={run.artifacts}
-            repositories={repositories.data?.repositories}
+      <div className="min-h-0 flex-1">
+        {visibleDefinition ? (
+          <GraphCanvas
+            key={currentScopeId}
+            definition={visibleDefinition}
+            disabled
+            overview
+            selectedKey={selectedNode?.nodeKey}
+            states={Object.fromEntries(
+              visibleNodes.map((node) => [node.nodeKey, node.state]),
+            )}
+            details={Object.fromEntries(
+              visibleNodes.map((node) => [node.nodeKey, nodeDetail(node)]),
+            )}
+            onSelect={(key) => {
+              const node = visibleNodes.find((item) => item.nodeKey === key);
+              if (!node) return;
+              setSelectedNodeId(node.id);
+              setNarrowPane("details");
+            }}
           />
-        </section>
-      )}
+        ) : (
+          <section className="space-y-3 rounded-xl border bg-card p-4">
+            <h2 className="text-body font-semibold">{t(($) => $.run.nodes)}</h2>
+            <ol className="space-y-2">
+              {visibleNodes.map((node) => (
+                <li key={node.id}>
+                  <button
+                    type="button"
+                    className="flex w-full flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-left hover:bg-accent"
+                    onClick={() => {
+                      setSelectedNodeId(node.id);
+                      setNarrowPane("details");
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 break-all text-body">
+                      {node.label || node.nodeKey}
+                    </span>
+                    <GraphState state={node.state} />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+
+  const railPane = (
+    <aside
+      data-testid="run-rail"
+      aria-label={t(($) => $.run.details)}
+      className={`${narrowPane === "details" ? "block" : "hidden xl:block"} min-h-0 min-w-0 space-y-4 xl:overflow-y-auto xl:pe-1`}
+    >
       {run.output && (
-        <section className="space-y-3 rounded-xl border p-4">
-          <h2 className="text-title font-medium">
-            {t(($) => $.production.output)}
-          </h2>
+        <section
+          data-testid="run-result"
+          className="min-w-0 space-y-3 rounded-xl border bg-card p-4"
+        >
+          <h2 className="text-body font-semibold">{t(($) => $.run.result)}</h2>
           <GraphValueView
             value={run.output}
             schema={run.definition?.outputSchema}
           />
         </section>
       )}
-      {gates.map((gate) => (
-        <section key={gate.id} className="space-y-4 rounded-xl border p-4">
-          <div className="flex items-center gap-2">
-            <h2 className="flex-1 text-title font-medium">
-              {(run.nodes.find((node) => node.id === gate.nodeRunId)?.label ||
-                run.nodes.find((node) => node.id === gate.nodeRunId)
-                  ?.nodeKey) ??
-                t(($) => $.run.approval)}
-            </h2>
-            <GraphState state={gate.state} />
-          </div>
-          <p className="text-body text-muted-foreground">
-            {t(($) => $.run.approval_help)}
-          </p>
-          {gate.candidate && (
-            <div className="space-y-4 rounded-lg bg-muted/20 p-4">
-              <h3 className="text-body font-medium">
-                {t(($) => $.production.evidence)}
-              </h3>
-              <GraphValueView
-                value={gate.candidate.outputs ?? gate.candidate.inputs}
-                schema={{
-                  properties: Object.fromEntries(
-                    run.nodes.map((node) => [
-                      node.nodeKey,
-                      {
-                        title: node.label || node.nodeKey,
-                        ...run.definition?.nodes.find(
-                          (item) => item.nodeKey === node.nodeKey,
-                        )?.outputSchema,
-                      },
-                    ]),
-                  ),
-                }}
-              />
-              {Array.isArray(gate.candidate.artifacts) && (
-                <GraphArtifactCards
-                  artifacts={gate.candidate.artifacts.map(asSchema)}
-                  repositories={repositories.data?.repositories}
-                />
-              )}
-            </div>
-          )}
-          <div className="space-y-2">
-            {(gate.approverIds?.length
-              ? gate.approverIds
-              : [gate.approverId]
-            ).map((memberId) => {
-              const vote = gate.decisions?.find(
-                (decision) => decision.memberId === memberId,
-              );
-              return (
-                <div
-                  key={memberId}
-                  className="flex flex-wrap items-center gap-2"
-                >
-                  <span className="min-w-0 flex-1 text-body">
-                    {members.data?.find((member) => member.id === memberId)
-                      ?.name ?? memberId}
-                  </span>
-                  {vote && <GraphState state={vote.decision} />}
-                  {canReplaceGraphApprover(run, actor) &&
-                    gate.state === "pending" && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          setReplacement({
-                            approval: gate,
-                            previousApproverId: memberId,
-                          })
-                        }
-                      >
-                        {t(($) => $.run.replace_approver)}
-                      </Button>
-                    )}
-                  {vote?.reason && (
-                    <p className="w-full text-caption text-muted-foreground">
-                      {vote.reason}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {pendingForActor.has(gate.id) && canApproveGraphRun(run, actor) ? (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={pending}
-                onClick={() => decide(gate, "approved")}
-              >
-                {t(($) => $.run.approve)}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={pending || !reason.trim()}
-                onClick={() => decide(gate, "rejected")}
-              >
-                {t(($) => $.run.reject)}
-              </Button>
-            </div>
-          ) : (
-            gate.state === "pending" && (
-              <p className="text-caption text-muted-foreground">
-                {t(($) => $.run.approval_waiting)}
-              </p>
-            )
-          )}
-          <JsonDetails
-            label={t(($) => $.production.raw_details)}
-            value={{
-              id: gate.id,
-              candidate_digest: gate.candidateDigest,
-              policy: gate.mode,
-              quorum: gate.quorum,
-              candidate: gate.candidate,
-            }}
+      {selectedNode ? (
+        <NodeDetail
+          wsId={wsId}
+          node={selectedNode}
+          definition={selectedDefinition}
+          canManage={
+            !run.archivedAt &&
+            canManageGraphRun(run, actor) &&
+            run.controlState === "run" &&
+            run.state === "blocked"
+          }
+          pending={pending}
+          reason={reason}
+          onReasonChange={setReason}
+          onAction={(action, nodeId) => {
+            if (selectedNode.nodeType === "http" && action === "retry") {
+              setReason("");
+              setHttpRetry(selectedNode);
+            } else act(action, nodeId);
+          }}
+        />
+      ) : (
+        <p className="rounded-xl border border-dashed p-4 text-caption text-muted-foreground">
+          {t(($) => $.run.select_node)}
+        </p>
+      )}
+      {run.artifacts.length > 0 && (
+        <RailDetails label={t(($) => $.run.artifacts)}>
+          <GraphArtifactCards
+            artifacts={run.artifacts}
+            repositories={repositories.data?.repositories}
           />
-        </section>
+        </RailDetails>
+      )}
+      {settledGates.map((gate) => (
+        <ApprovalCard
+          key={gate.id}
+          run={run}
+          gate={gate}
+          members={members.data ?? []}
+          repositories={repositories.data?.repositories ?? []}
+          canDecide={false}
+          canReplace={false}
+          pending={pending}
+          reason={reason}
+          onReasonChange={setReason}
+          onDecide={decide}
+          onReplace={() => undefined}
+        />
       ))}
-      <details className="rounded-xl border p-4">
-        <summary className="cursor-pointer text-body font-medium">
-          {t(($) => $.production.events)}
-        </summary>
-        <ol className="mt-4 space-y-3">
+      <RailDetails label={t(($) => $.run.input)}>
+        <GraphValueView
+          value={run.input}
+          schema={run.definition?.inputSchema}
+        />
+      </RailDetails>
+      <RailDetails label={t(($) => $.production.events)}>
+        <ol className="space-y-3">
           {run.events.map((event, index) => (
             <li key={String(event.id ?? index)} className="border-l-2 pl-4">
               <p className="text-caption text-muted-foreground">
@@ -671,7 +784,7 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
             </li>
           ))}
         </ol>
-      </details>
+      </RailDetails>
       <JsonDetails
         label={t(($) => $.production.raw_details)}
         value={{
@@ -681,6 +794,129 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
           version_id: run.versionId,
         }}
       />
+    </aside>
+  );
+
+  return (
+    <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
+      <GraphError
+        error={control.error ?? approval.error ?? replaceApprover.error}
+      />
+      <header className="flex flex-wrap items-start gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <AppLink
+              href={paths.issueDetail(run.rootIssueId)}
+              className="text-caption underline underline-offset-4"
+            >
+              {t(($) => $.run.parent)}
+            </AppLink>
+            <GraphState state={run.state} />
+            {controlState && <GraphState state={controlState} />}
+            <span className="text-caption text-muted-foreground">
+              {t(($) => $.page.revision, { revision: run.revision })}
+            </span>
+            {run.previousRunId && (
+              <AppLink
+                href={paths.graphRun(run.previousRunId)}
+                className="text-caption underline underline-offset-4"
+              >
+                {t(($) => $.production.previous_run)}
+              </AppLink>
+            )}
+          </div>
+          {run.graphName && (
+            <h1 className="text-title font-semibold">{run.graphName}</h1>
+          )}
+          {run.blockReason && (
+            <p role="status" className="text-body text-destructive">
+              {run.blockReason}
+            </p>
+          )}
+          {controlState === "cancel_requested" && (
+            <p role="status" className="text-body text-muted-foreground">
+              {t(($) => $.run.cancel_pending)}
+            </p>
+          )}
+          {!actions.length && !canApproveGraphRun(run, actor) && (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.run.no_controls)}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {actions.map((action) => (
+            <Button
+              key={action}
+              variant={action === "cancel" ? "destructive" : "outline"}
+              size="sm"
+              disabled={pending}
+              onClick={() =>
+                action === "cancel" ? setConfirmCancel(true) : act(action)
+              }
+            >
+              {actionLabels[action]}
+            </Button>
+          ))}
+          {run.graphId &&
+            GRAPH_TERMINAL_STATES.has(run.state) &&
+            canManageGraphRun(run, actor) && (
+              <AppLink
+                href={`${paths.graphDetail(run.graphId)}?issue=${encodeURIComponent(run.rootIssueId)}&previous_run=${encodeURIComponent(run.id)}`}
+                className="inline-flex rounded-md border px-3 py-2 text-body font-medium hover:bg-accent"
+              >
+                {t(($) => $.production.rework)}
+              </AppLink>
+            )}
+        </div>
+      </header>
+      {pendingGates.map((gate) => (
+        <ApprovalCard
+          key={gate.id}
+          run={run}
+          gate={gate}
+          members={members.data ?? []}
+          repositories={repositories.data?.repositories ?? []}
+          canDecide={
+            pendingForActor.has(gate.id) && canApproveGraphRun(run, actor)
+          }
+          canReplace={canReplaceGraphApprover(run, actor)}
+          pending={pending}
+          reason={reason}
+          onReasonChange={setReason}
+          onDecide={decide}
+          onReplace={(approvalGate, previousApproverId) =>
+            setReplacement({
+              approval: approvalGate,
+              previousApproverId,
+            })
+          }
+        />
+      ))}
+      <div className="flex gap-2 xl:hidden">
+        <Button
+          variant={narrowPane === "flow" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setNarrowPane("flow")}
+        >
+          {t(($) => $.studio.flow)}
+        </Button>
+        <Button
+          variant={narrowPane === "details" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setNarrowPane("details")}
+        >
+          {t(($) => $.run.details)}
+        </Button>
+      </div>
+      {/* The flow is the map and the rail is the record. Both are bounded so the
+          page is one screen whatever the run produced, and each pane scrolls
+          itself; letting a run's output set the page height is what turned this
+          page into ninety screens of stacked cards. */}
+      <div className="grid min-h-0 gap-4 xl:h-[min(760px,78vh)] xl:grid-cols-[minmax(0,1fr)_420px] xl:grid-rows-1">
+        {flowPane}
+        {railPane}
+      </div>
       <AlertDialog
         open={Boolean(httpRetry)}
         onOpenChange={(open) => {
@@ -818,6 +1054,17 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
               {t(($) => $.run.cancel_help)}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <Field label={t(($) => $.run.reason)}>
+            {(id) => (
+              <Textarea
+                id={id}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder={t(($) => $.run.reason_placeholder)}
+                disabled={pending}
+              />
+            )}
+          </Field>
           <AlertDialogFooter>
             <AlertDialogCancel>{t(($) => $.run.dismiss)}</AlertDialogCancel>
             <AlertDialogAction disabled={pending} onClick={() => act("cancel")}>

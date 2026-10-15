@@ -2665,12 +2665,20 @@ func (q *Queries) CreateSystemUserAgent(ctx context.Context, arg CreateSystemUse
 
 const deleteSystemAgentByID = `-- name: DeleteSystemAgentByID :exec
 DELETE FROM agent
-WHERE id = $1 AND kind = 'system' AND system_key LIKE 'agent_builder:%'
+WHERE id = $1
+  AND kind = 'system'
+  AND (system_key LIKE 'agent_builder:%' OR system_key LIKE 'graph_builder:%')
 `
 
 // Builder sessions own their hidden execution agent. Deleting the session
 // removes that carrier and its task rows; the kind guard prevents this cleanup
 // path from ever deleting a user-authored agent.
+//
+// Both builder namespaces are listed because one delete path serves both: the
+// Graph creation conversation carries a `graph_builder:` agent exactly as the
+// agent-creation studio carries an `agent_builder:` one, and a carrier the
+// namespace pattern misses would be orphaned — invisible to every list, and
+// reachable by no prune but the workspace teardown.
 func (q *Queries) DeleteSystemAgentByID(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteSystemAgentByID, id)
 	return err
@@ -5967,7 +5975,9 @@ SET runtime_id = $1,
     runtime_mode = $2,
     model = $3,
     updated_at = now()
-WHERE id = $4 AND kind = 'system' AND system_key LIKE 'agent_builder:%'
+WHERE id = $4
+  AND kind = 'system'
+  AND (system_key LIKE 'agent_builder:%' OR system_key LIKE 'graph_builder:%')
 RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier
 `
 
@@ -5983,8 +5993,9 @@ type RebindAgentBuilderRuntimeParams struct {
 // UPDATE is the only thing that actually moves subsequent replies; the live-draft
 // picker alone never did. model is reset wholesale because model ids are
 // per-runtime — the new runtime resolves its own default instead of inheriting an
-// id it may not serve. The kind/system_key guard mirrors DeleteSystemAgentByID so
-// this path can never touch a user-authored agent.
+// id it may not serve. The kind/system_key guard mirrors DeleteSystemAgentByID,
+// both namespaces included, so this path can never touch a user-authored agent
+// and never silently misses a carrier the delete path above would have removed.
 //
 // Callers MUST hold LockChatSessionForRuntimeBind on the owning chat_session for
 // the whole transaction, otherwise a concurrent send can stamp a task with the

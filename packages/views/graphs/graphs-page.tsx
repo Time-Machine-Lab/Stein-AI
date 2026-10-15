@@ -4,6 +4,7 @@ import { useDeferredValue, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, GitBranch, Plus, Search } from "lucide-react";
 import {
+  graphControlState,
   graphSearchOptions,
   graphRunSearchOptions,
 } from "@multica/core/graphs";
@@ -243,33 +244,34 @@ export function GraphsPage() {
             </p>
           ) : (
             <div className="overflow-hidden rounded-xl border">
-              {runs.data.items.map((run) => (
-                <AppLink
-                  key={run.id}
-                  href={paths.graphRun(run.id)}
-                  className="flex flex-wrap items-center gap-3 border-b p-4 last:border-b-0 hover:bg-accent/40"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-body font-medium">
-                      {run.graphName ||
-                        graphs.data?.items.find(
-                          (graph) => graph.id === run.graphId,
-                        )?.name ||
-                        run.id.slice(0, 8)}
-                    </p>
-                    <p className="mt-1 text-caption text-muted-foreground">
-                      {run.createdAt
-                        ? new Date(run.createdAt).toLocaleString()
-                        : ""}
-                    </p>
-                  </div>
-                  <GraphState state={run.state} />
-                  {run.controlState !== "run" && (
-                    <GraphState state={run.controlState} />
-                  )}
-                  <ArrowRight className="size-4 text-muted-foreground" />
-                </AppLink>
-              ))}
+              {runs.data.items.map((run) => {
+                const controlState = graphControlState(run);
+                return (
+                  <AppLink
+                    key={run.id}
+                    href={paths.graphRun(run.id)}
+                    className="flex flex-wrap items-center gap-3 border-b p-4 last:border-b-0 hover:bg-accent/40"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-body font-medium">
+                        {run.graphName ||
+                          graphs.data?.items.find(
+                            (graph) => graph.id === run.graphId,
+                          )?.name ||
+                          run.id.slice(0, 8)}
+                      </p>
+                      <p className="mt-1 text-caption text-muted-foreground">
+                        {run.createdAt
+                          ? new Date(run.createdAt).toLocaleString()
+                          : ""}
+                      </p>
+                    </div>
+                    <GraphState state={run.state} />
+                    {controlState && <GraphState state={controlState} />}
+                    <ArrowRight className="size-4 text-muted-foreground" />
+                  </AppLink>
+                );
+              })}
             </div>
           )}
           <Pager

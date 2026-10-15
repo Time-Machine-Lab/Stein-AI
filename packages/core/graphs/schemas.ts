@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { graphUtf8Length } from "./text";
 import type {
+  GraphBuilderSession,
+  GraphBuilderSessionSummary,
   GraphInputBinding,
   GraphCondition,
   GraphDefinition,
@@ -185,11 +187,85 @@ export const GraphNodeDefinitionSchema: z.ZodType<GraphNodeDefinition> = z.lazy(
       })),
 );
 
-export const GraphGenerationOptionsSchema = z.object({ enabled: z.boolean() });
+// `builder_enabled` is advertised by servers that support the chat-based
+// creation flow; `enabled` still means the legacy server-model path. Each is
+// defaulted independently so a server that sends neither (or an older one
+// that never heard of builder_enabled) degrades to the legacy/unavailable
+// branch rather than throwing.
+export const GraphGenerationOptionsSchema = z
+  .object({
+    enabled: z.boolean().catch(false),
+    builder_enabled: z.boolean().catch(false),
+  })
+  .transform((value) => ({
+    enabled: value.enabled,
+    builderEnabled: value.builder_enabled,
+  }));
+
 export const GraphGenerationResultSchema = z.object({
   definition: GraphDefinitionSchema,
   summary: z.string().optional(),
 });
+
+export const GraphBuilderSessionSchema = z
+  .object({
+    session_id: z.string(),
+    builder_agent_id: z.string(),
+    runtime_id: z.string(),
+    model: z.string().catch(""),
+    default_agent_id: z.string(),
+    approver_id: z.string(),
+  })
+  .transform((value) => ({
+    sessionId: value.session_id,
+    builderAgentId: value.builder_agent_id,
+    runtimeId: value.runtime_id,
+    model: value.model,
+    defaultAgentId: value.default_agent_id,
+    approverId: value.approver_id,
+  }));
+
+// A session that failed to parse is a session that cannot be addressed, so the
+// caller sees an empty id and treats the start as having failed, rather than
+// binding a conversation id the server never confirmed.
+export const EMPTY_GRAPH_BUILDER_SESSION: GraphBuilderSession = {
+  sessionId: "",
+  builderAgentId: "",
+  runtimeId: "",
+  model: "",
+  defaultAgentId: "",
+  approverId: "",
+};
+
+export const GraphBuilderSessionSummarySchema = z
+  .object({
+    session_id: z.string(),
+    title: z.string().catch(""),
+    runtime_id: z.string().catch(""),
+    created_at: z.string().catch(""),
+    updated_at: z.string().catch(""),
+    last_message_content: z.string().catch(""),
+    last_message_role: z.string().catch(""),
+    last_message_at: z.string().catch(""),
+  })
+  .transform((value) => ({
+    sessionId: value.session_id,
+    title: value.title,
+    runtimeId: value.runtime_id,
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+    lastMessageContent: value.last_message_content,
+    lastMessageRole: value.last_message_role,
+    lastMessageAt: value.last_message_at,
+  }));
+
+export const GraphBuilderSessionListSchema = z.object({
+  sessions: z.array(GraphBuilderSessionSummarySchema).catch([]),
+});
+
+export const EMPTY_GRAPH_BUILDER_SESSION_LIST: {
+  sessions: GraphBuilderSessionSummary[];
+} = { sessions: [] };
 
 export const GraphVersionSchema = z
   .object({
@@ -340,6 +416,7 @@ export const GraphRunSchema = z
             input: object.catch({}),
             input_hash: z.string().catch(""),
             max_attempts: z.number().int().nonnegative().catch(0),
+            granted_attempts: z.number().int().nonnegative().catch(0),
             can_retry: z.boolean().catch(false),
             can_resolve_block: z.boolean().catch(false),
             accepted_submission_id: reason,
@@ -403,6 +480,7 @@ export const GraphRunSchema = z
             input: value.input,
             inputHash: value.input_hash,
             maxAttempts: value.max_attempts,
+            grantedAttempts: value.granted_attempts,
             attempts: value.attempts,
             canRetry: value.can_retry,
             canResolveBlock: value.can_resolve_block,

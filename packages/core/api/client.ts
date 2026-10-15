@@ -216,6 +216,10 @@ import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
+  EMPTY_GRAPH_BUILDER_SESSION,
+  EMPTY_GRAPH_BUILDER_SESSION_LIST,
+  GraphBuilderSessionListSchema,
+  GraphBuilderSessionSchema,
   GraphGenerationOptionsSchema,
   GraphGenerationResultSchema,
   GraphListSchema,
@@ -239,6 +243,8 @@ import type { GraphTrigger, GraphTriggerWrite } from "../graphs/types";
 import { definitionToWire, importGraphDefinition } from "../graphs/definition";
 import type {
   GraphApprovalRequest,
+  GraphBuilderSession,
+  GraphBuilderSessionSummary,
   GraphCommand,
   GraphDefinition,
   GraphGenerationOptions,
@@ -915,9 +921,64 @@ export class ApiClient {
     return parseWithFallback<GraphGenerationOptions>(
       await this.fetch<unknown>("/api/graphs/generation-options"),
       GraphGenerationOptionsSchema,
-      { enabled: false },
+      { enabled: false, builderEnabled: false },
       { endpoint: "GET /api/graphs/generation-options" },
     );
+  }
+
+  /**
+   * Starts a Graph-design conversation.
+   *
+   * The server creates two rows and returns their ids: a hidden carrier agent
+   * holding the authoring contract, and the chat session it answers on. Which
+   * runtime the conversation runs on is the chosen executor's — the carrier
+   * clones it — so this call is also a readiness check on that agent.
+   */
+  async createGraphBuilderSession(data: {
+    defaultAgentId: string;
+    agentScope: string[];
+    approverId: string;
+  }): Promise<GraphBuilderSession> {
+    const raw = await this.fetch<unknown>("/api/graph-builder/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        default_agent_id: data.defaultAgentId,
+        agent_scope: data.agentScope,
+        approver_id: data.approverId,
+      }),
+    });
+    return parseWithFallback(
+      raw,
+      GraphBuilderSessionSchema,
+      EMPTY_GRAPH_BUILDER_SESSION,
+      { endpoint: "POST /api/graph-builder/sessions" },
+    );
+  }
+
+  /**
+   * The caller's unfinished Graph-design conversations.
+   *
+   * A recovery path, not a resume path: a live conversation is addressed by the
+   * session id in the client's own draft document, so this only matters when
+   * that document is gone — cleared storage, another browser — and it is also
+   * the only handle on a carrier that would otherwise be orphaned. A 404 means
+   * the backend predates the endpoint: degrade to "no drafts" instead of
+   * erroring the editor, as listAgentBuilderSessions does.
+   */
+  async listGraphBuilderSessions(): Promise<GraphBuilderSessionSummary[]> {
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>("/api/graph-builder/sessions");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return [];
+      throw err;
+    }
+    return parseWithFallback(
+      raw,
+      GraphBuilderSessionListSchema,
+      EMPTY_GRAPH_BUILDER_SESSION_LIST,
+      { endpoint: "GET /api/graph-builder/sessions" },
+    ).sessions;
   }
 
   async generateGraph(

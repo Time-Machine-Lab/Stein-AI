@@ -362,10 +362,8 @@ export function importGraphDefinition(text: string): GraphDefinition {
       ) ||
       !agent.maxAttempts ||
       agent.maxAttempts < 1 ||
-      agent.maxAttempts > 3 ||
       !agent.timeoutSeconds ||
-      agent.timeoutSeconds < 1 ||
-      agent.timeoutSeconds > 86400
+      agent.timeoutSeconds < 1
     )
       throw new Error(
         `Agent step ${agent.nodeKey} is incomplete or exceeds V1 limits.`,

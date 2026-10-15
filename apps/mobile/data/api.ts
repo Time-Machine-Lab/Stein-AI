@@ -407,7 +407,7 @@ class ApiClient {
   async getGraphGenerationOptions(opts?: { signal?: AbortSignal }): Promise<GraphGenerationOptions> {
     return parseWithFallback<GraphGenerationOptions>(
       await this.fetch<unknown>("/api/graphs/generation-options", { signal: opts?.signal }), GraphGenerationOptionsSchema,
-      { enabled: false }, { endpoint: "GET /api/graphs/generation-options" },
+      { enabled: false, builderEnabled: false }, { endpoint: "GET /api/graphs/generation-options" },
     );
   }
 

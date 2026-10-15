@@ -320,7 +320,11 @@ type Handler struct {
 	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
-	LLM             *llm.Client
+	LLM *llm.Client
+	// graphGeneration bounds concurrency and repeats on the legacy synchronous
+	// authoring endpoint. It is not an authoring budget: it exists because that
+	// endpoint spends a server-side model call per request, and a client loop
+	// would otherwise be unbounded. The chat-based path has no such gate.
 	graphGeneration *graphGenerationGate
 	// VCSSecretBox encrypts/decrypts per-workspace Git provider access tokens and
 	// webhook secrets at rest (Forgejo / Gitea / GitLab). Nil when

@@ -157,6 +157,13 @@ func buildGraphPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are executing one immutable Multica Graph node. Complete only this node; the Graph engine owns scheduling, issue state, retry, and approval.\n\n")
 	fmt.Fprintf(&b, "Node: %s; attempt: %d.\n\n", task.Graph.NodeSpec.Node.Key, task.Graph.Identity.AttemptNo)
+	if note := task.Graph.HumanNote; note != nil {
+		// A person's reason has to arrive here or nowhere: this node's input is
+		// frozen for the node's whole life, and the line below tells the agent
+		// not to go looking for new comments, so anything left elsewhere would
+		// never reach the attempt it was written for.
+		fmt.Fprintf(&b, "A person cleared this node's block and left this instruction for this attempt:\n%s\n\n", note.Reason)
+	}
 	b.WriteString("Read your frozen context with `multica graph node context --output json`. Do not fetch new issue comments, change issue state, delegate work, or start another task.\n\n")
 	if task.Agent != nil && task.Agent.Instructions != "" {
 		fmt.Fprintf(&b, "Frozen agent instructions:\n%s\n\n", task.Agent.Instructions)
@@ -175,7 +182,8 @@ func buildGraphPrompt(task Task) string {
 	if task.Graph.NodeSpec.Node.ExecutionMode == graph.ExecutionVerifyCommit {
 		b.WriteString("Keep HEAD at the input candidate and leave the checkout clean. Return tested_commit_sha equal to that input commit.\n")
 	}
-	b.WriteString("Write a result JSON file with outcome (pass, environment_blocked, or needs_changes), output, optional artifacts, and diagnostics for any non-pass outcome. Submit it with `multica graph node submit --result-file <path> --output json`, then exit. The CLI binds the current attempt identity. Use `multica graph node block --reason-file <path> --output json` for an environment blocker, then exit. Put result/diagnostic files outside the repository checkout so the delivered code remains clean. A submission is staged until the executor stops and the engine accepts it.\n")
+	b.WriteString("Write a result JSON file with outcome (pass, environment_blocked, or needs_changes), output, optional artifacts, and diagnostics for any non-pass outcome. outcome=pass accepts your output and continues the graph; outcome=needs_changes rejects this node and ends the whole run as rejected at once, without returning to an earlier step. So when your node judges work rather than doing it, put the verdict in the output and submit pass - a later condition, branch, loop or approval is what decides what that verdict means - and keep needs_changes for a run that must stop so a person can change the definition, the requirements or the implementation. Submit it with `multica graph node submit --result-file <path> --output json`. The CLI binds the current attempt identity. Use `multica graph node block --reason-file <path> --output json` for an environment blocker. Put result/diagnostic files outside the repository checkout so the delivered code remains clean. A submission is staged until the executor stops and the engine accepts it.\n")
+	b.WriteString("After a successful submit or block, publish one concise end-of-attempt report with multica graph node comment --body-file <path>, then exit. Write the UTF-8 report file inside the task workdir but outside the repository checkout. Use a short paragraph or up to three bullets in the task's language, roughly 100-300 Chinese characters or a similarly brief report in other languages. Summarize work completed, key findings, checks actually performed, and any remaining issues. For blocked or needs_changes outcomes, explain the reason and what is needed next. Do not paste tool logs, raw JSON, internal IDs, or local paths. Do not claim Graph acceptance, artifact delivery, or human approval; say the result or blocker was submitted and is awaiting validation. Publish at most one end-of-attempt report per attempt. If posting fails, exit without changing or resubmitting the staged result.\n")
 	return b.String()
 }
 

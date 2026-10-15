@@ -1830,6 +1830,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Put("/{sessionId}/draft", h.SaveAgentBuilderDraft)
 			})
 
+			r.Route("/api/graph-builder/sessions", func(r chi.Router) {
+				// Graph-design conversations. Same hidden-carrier mechanism as
+				// the agent builder above, so the same two routes: start one,
+				// and find one that storage no longer points at. Messages,
+				// streaming, stop, archive and delete all go through the
+				// ordinary chat routes.
+				r.Get("/", h.ListGraphBuilderSessions)
+				r.Post("/", h.CreateGraphBuilderSession)
+			})
+
 			// Skills
 			r.Route("/api/skills", func(r chi.Router) {
 				r.Get("/", h.ListSkills)

@@ -790,6 +790,10 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 // Requesting User, Task Initiator, Workspace Context, Connected Apps,
 // Workflow, Always Use CLI, Output — are shared by every kind and emitted
 // unconditionally (or gated by their own data preconditions).
+//
+// Graph authoring follows quick-create's shape (minimal Available Commands,
+// no Repositories) and also omits Issue Body Formatting, since it never
+// touches an issue.
 func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 	kind := classifyTask(ctx)

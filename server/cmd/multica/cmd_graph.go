@@ -140,7 +140,11 @@ func graphCLIClient(cmd *cobra.Command, task bool) (*cli.APIClient, error) {
 		return nil, err
 	}
 	if task && !strings.HasPrefix(client.Token, "mat_") {
-		return nil, fmt.Errorf("graph node requires the current task-scoped mat_ credential")
+		group := "node"
+		if parent := cmd.Parent(); parent != nil {
+			group = parent.Name()
+		}
+		return nil, fmt.Errorf("graph %s requires the current task-scoped mat_ credential", group)
 	}
 	if !task && strings.HasPrefix(client.Token, "mat_") {
 		return nil, fmt.Errorf("Graph management requires a human credential")

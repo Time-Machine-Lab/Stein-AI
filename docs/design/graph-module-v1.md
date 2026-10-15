@@ -57,6 +57,8 @@ Agent 节点统一返回以下结果：
 | `environment_blocked` | 保存诊断并阻塞；由人处理环境后请求重试 |
 | `needs_changes` | 当前运行以 `rejected` 结束；不自动回跳 |
 
+闸门节点的结论属于 `output`，不属于 `outcome`。输出被后续条件、分支或循环读取的节点（走查、评分、验收）是在报告判断结果，不是在自己的执行上失败：它交 `pass` 并把结论写进输出，由读取它的条件决定下一步——循环就是靠这个决定要不要再来一轮。交 `needs_changes` 会让节点被拒绝、整条运行当场以 `rejected` 结束，循环的迭代预算一次都用不上，运行也无法恢复。`needs_changes` 留给「必须由人改定义、改需求或改实现」的运行，以及确实无法产出输出 schema 接受的输出的节点；`environment_blocked` 仍用于环境阻塞。执行侧的说法（内置技能与 daemon 提示）与创作契约的 `graphDefinitionGrammar` 都写明了这条规则。
+
 人工拒绝同样使运行进入 `rejected`。返工创建新的 GraphRun，记录 `previous_run_id`，显式选择新基准和反馈输入，重新执行整条链。第一版不复用上一运行的节点成功状态和审批；上一运行的产物可以成为新运行的输入。
 
 ## 4 对象关系与状态所有权
@@ -146,7 +148,9 @@ Agent 报告 `environment_blocked` 或 `needs_changes` 时，允许只交诊断�
 
 ## 9 状态与人工控制
 
-GraphRun 的生命周期为 `active`、`waiting_approval`、`blocked`、`succeeded`、`rejected`、`failed`、`cancelled`。另存 `control_state = run / pause / cancel_requested`，避免暂停覆盖正在审批或阻塞的原状态。界面按两者组合显示“暂停中”“已暂停”“取消中”。
+GraphRun 的生命周期为 `active`、`waiting_approval`、`blocked`、`succeeded`、`rejected`、`failed`、`cancelled`。另存 `control_state = run / pause / cancel_requested`，避免暂停覆盖正在审批或阻塞的原状态。运行未终结时，界面按两者组合显示“暂停中”“已暂停”“取消中”。
+
+`cancel_requested` 不只是人工取消：运行以任何非成功的终态结束时，引擎也用它停下推进（`graphTerminateV2`），随后一直留在运行上。终态运行的 `control_state` 因此**不予显示**——终态本身就是全部信息，否则一条 `rejected` 运行会永远显示“正在取消”，而页面上已没有任何能把它取消掉的入口。
 
 NodeRun 的状态为 `pending`、`ready`、`active`、`validating`、`waiting_approval`、`blocked`、`succeeded`、`rejected`、`failed`、`cancelled`。Task 保留现有物理执行状态；NodeRun 不复制 queued/dispatched/running 的全部细分状态。
 

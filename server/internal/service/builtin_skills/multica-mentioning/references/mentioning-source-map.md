@@ -155,3 +155,8 @@ implements `graph node context`, `submit`, and `block`.
 `runGraphNodeComment` resolves `issue_id` through that same scoped context and
 posts only a diagnostic comment to its current node issue; it never calls the
 ordinary live issue resolver.
+`buildGraphPrompt` and `server/internal/handler/graph_snapshot.go`
+(`graphBuiltinSkill`) require one concise end-of-attempt report after a
+successful submit or block, before exiting. Reports describe work, findings,
+actual checks and remaining issues without claiming platform acceptance or
+delivery. A failed comment must not change or resubmit the staged result.

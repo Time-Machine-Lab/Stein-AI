@@ -17,20 +17,58 @@
   skips ordinary close-intent status advancement for Graph-owned issues.
 - `server/internal/daemon/graph.go`: `buildGraphPrompt`, `finalizeGraphGit` and
   `finalizeGraphTask` define structured delivery and stopped receipts.
+- `server/internal/daemon/graph.go` (`buildGraphPrompt`) and
+  `server/internal/handler/graph_snapshot.go` (`graphBuiltinSkill`) instruct the
+  agent to post one short report after a successful submit or block, before
+  exiting. The report distinguishes submitted work from platform acceptance;
+  a comment failure must not change or resubmit the staged result.
+  `server/cmd/multica/cmd_graph.go` (`runGraphNodeComment`) resolves the current
+  node issue from scoped context and posts the report through the comment API.
 - `server/internal/graph/result.go`: `ValidateResult` enforces execution-mode
   artifacts (artifact ids must be UUIDs), output schema, diagnostics and the
   tested candidate SHA.
 - `server/internal/handler/graph_generation.go`: `GetGraphGenerationOptions`
-  reports configured AI availability; `GenerateGraph` accepts human workspace
-  member requests at `POST /api/graphs/generate` with `prompt`, `agent_id` and
-  `approver_id`. It validates invocation permission and Graph eligibility,
-  uses the server-internal LLM client, and returns a validated `definition`
-  without persisting or executing it. Agent and approver identities are fixed
-  by the server. `graph_generation_context.go` includes the current definition
-  and bounded conversation history; V2 output is checked against topology,
-  bindings and authorized actor aliases before being returned as a proposal.
-- `packages/views/graphs/graph-editor.tsx`: the shared web/desktop creation
-  editor presents AI authoring, visual step editing and explicit draft saving.
+  reports what this deployment can author with (`enabled` for the server model,
+  `builder_enabled` for the conversation); **`GenerateGraph` is the legacy
+  server-model path**, kept for deployments whose server has no builder. It
+  accepts human workspace member requests at `POST /api/graphs/generate` with
+  `prompt`, `agent_id` and `approver_id`, validates invocation permission and
+  Graph eligibility (`graphAgentEligible` lives here), uses the
+  server-internal LLM client, and returns a validated `definition` without
+  persisting or executing it. Agent and approver identities are fixed by the
+  server. `graph_generation_context.go` includes the current definition and
+  bounded conversation history; V2 output is checked against topology, bindings
+  and authorized actor aliases before being returned as a proposal.
+- `server/internal/handler/graph_builder.go`: the authoring path the product
+  uses. `CreateGraphBuilderSession` creates the conversation at
+  `POST /api/graph-builder/sessions` — one hidden `kind='system'` carrier agent
+  per conversation, with `system_key` `graph_builder:<flow-id>` and the chosen
+  executor's runtime and model, plus an ordinary `chat_session`.
+  `ListGraphBuilderSessions` (`GET /api/graph-builder/sessions`) lists this
+  user's unfinished conversations so an orphaned carrier can still be deleted.
+  `graphBuilderInstructions` is the carrier's system prompt and the whole
+  authoring contract; `graphBuilderExecutor` is the invocation, readiness and
+  runtime gate. There is no server-side draft store and no submission budget:
+  the reply carries the definition and the client merges it.
+- `packages/core/graphs/authoring-protocol.ts`: the wire contract in one
+  module. `encodeGraphBuilderInput` writes `MULTICA_GRAPH_BUILDER_INPUT` plus
+  the alias-only envelope (`user_request`, `current_definition`, `agents`,
+  `approvers`), `decodeGraphBuilderInput` reads the user's own text back out,
+  `parseGraphDraft`/`hasGraphDraftBlock`/`stripGraphDraft` read and hide the
+  `<graph_draft>` block, and `definitionToAliases`/`mergeGraphDraft` are the two
+  directions of the alias mapping (actor ids never cross the wire).
+- `packages/views/graphs/`: the shared web/desktop creation editor presents the
+  conversation, visual step editing and explicit draft saving.
+  `graph-ai-setup-panel.tsx` is the step that starts a conversation,
+  `graph-ai-workspace.tsx` is chat-left/canvas-right and merges each reply into
+  the draft, `use-graph-builder-session.ts` drives the chat lifecycle, and
+  `graph-ai-actors.ts` builds the directory. It picks its path through
+  `graphGenerationMode` in `packages/core/graphs/controls.ts` (the conversation
+  wins, the server model is the fallback). `graph-ai-composer.tsx` is the
+  legacy form, reached only when the server has no builder.
+- Migrations `372_graph_generation`, `373_graph_generation_id` and
+  `374_graph_generation_requester` created the `graph_generation` table;
+  `379_drop_graph_generation` drops it now that no request is stored.
 
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`
@@ -244,4 +282,9 @@ grep -n 'extractIdentifiers(\|extractClosingIdentifiers(\|derivePRState(' intern
 grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/github.go pkg/db/queries/github.sql
 grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
+grep -n 'func (h \*Handler) CreateGraphBuilderSession\|func (h \*Handler) ListGraphBuilderSessions\|const graphBuilderInstructions\|graphBuilderSystemKeyPrefix' internal/handler/graph_builder.go
+grep -n 'func (h \*Handler) graphAgentEligible\|func (h \*Handler) GetGraphGenerationOptions\|func (h \*Handler) GenerateGraph' internal/handler/graph_generation.go
+grep -n 'export function encodeGraphBuilderInput\|export function parseGraphDraft\|export function mergeGraphDraft\|export function definitionToAliases' packages/core/graphs/authoring-protocol.ts
+grep -n 'CREATE TABLE.*graph_generation'   migrations/372_graph_generation.up.sql
+grep -n 'DROP TABLE'                       migrations/379_drop_graph_generation.up.sql
 ```

@@ -55,7 +55,7 @@ func TestGraphScriptRejectsInvalidOutputAndStopsTimeout(t *testing.T) {
 			node.Instructions = ""
 			node.TimeoutSeconds = 1
 			node.Script = &graph.ScriptConfig{Language: "javascript", Code: tc.code, TimeoutSeconds: 1}
-			manifest, err := graph.NewAttemptManifest(task.Graph.NodeSpec, task.Graph.Identity)
+			manifest, err := graph.NewAttemptManifest(task.Graph.NodeSpec, task.Graph.Identity, graph.AttemptGrant{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +126,7 @@ func TestGraphScriptRunsLocallyAndStagesValidatedOutputUsingTaskCredential(t *te
 	task.Graph.NodeSpec.Node.Instructions = ""
 	task.Graph.NodeSpec.Node.Script = &graph.ScriptConfig{Language: "javascript", Code: `return {summary: input.goal}`, TimeoutSeconds: 60}
 	task.Graph.NodeSpec.Node.TimeoutSeconds = 60
-	manifest, err := graph.NewAttemptManifest(task.Graph.NodeSpec, task.Graph.Identity)
+	manifest, err := graph.NewAttemptManifest(task.Graph.NodeSpec, task.Graph.Identity, graph.AttemptGrant{})
 	if err != nil {
 		t.Fatal(err)
 	}

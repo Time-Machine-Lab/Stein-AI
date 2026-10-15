@@ -209,8 +209,7 @@ export function GraphNodeInspector({
                     id={id}
                     type="number"
                     min={1}
-                    max={3}
-                    value={node.maxAttempts ?? 1}
+                    value={node.maxAttempts ?? 16}
                     onChange={(event) =>
                       patch({ maxAttempts: Number(event.target.value) })
                     }
@@ -223,8 +222,7 @@ export function GraphNodeInspector({
                     id={id}
                     type="number"
                     min={1}
-                    max={86400}
-                    value={node.timeoutSeconds ?? 3600}
+                    value={node.timeoutSeconds ?? 21600}
                     onChange={(event) =>
                       patch({ timeoutSeconds: Number(event.target.value) })
                     }

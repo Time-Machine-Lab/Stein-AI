@@ -24,6 +24,18 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   generate: vi.fn(),
   enabled: true,
+  // Every existing case here exercises the legacy path; chat cases opt in.
+  builderEnabled: false,
+  runtimes: [] as unknown[],
+  agents: [
+    {
+      id: "agent-1",
+      name: "Builder",
+      model: "deepseek",
+      custom_args: ["--verbose"],
+      runtime_config: { effort: "high" },
+    },
+  ],
   replace: vi.fn(),
   actor: { userId: "user-1", role: "admin", memberId: "member-1" },
 }));
@@ -53,15 +65,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({
     queryKey: ["agents"],
     queryFn: async () => [],
-    initialData: [
-      {
-        id: "agent-1",
-        name: "Builder",
-        model: "deepseek",
-        custom_args: ["--verbose"],
-        runtime_config: { effort: "high" },
-      },
-    ],
+    initialData: mocks.agents,
   }),
   memberListOptions: () => ({
     queryKey: ["members"],
@@ -92,9 +96,50 @@ vi.mock("@multica/core/graphs", async (original) => ({
   useGenerateGraph: () => ({ mutateAsync: mocks.generate }),
   graphGenerationOptions: () => ({
     queryKey: ["generation-options"],
-    queryFn: async () => ({ enabled: mocks.enabled }),
-    initialData: { enabled: mocks.enabled },
+    queryFn: async () => ({
+      enabled: mocks.enabled,
+      builderEnabled: mocks.builderEnabled,
+    }),
+    initialData: {
+      enabled: mocks.enabled,
+      builderEnabled: mocks.builderEnabled,
+    },
   }),
+}));
+vi.mock("@multica/core/runtimes", () => ({
+  runtimeListOptions: () => ({
+    queryKey: ["runtimes"],
+    queryFn: async () => [],
+    initialData: mocks.runtimes,
+  }),
+}));
+// The two AI modes are their own units, with their own tests; these cases are
+// about which one the editor mounts and what it hands them.
+vi.mock("./graph-ai-setup-panel", () => ({
+  GraphAiSetupPanel: ({ onManual }: { onManual: () => void }) => (
+    <div>
+      <p>Setup step</p>
+      <button type="button" onClick={onManual}>
+        Build manually
+      </button>
+    </div>
+  ),
+}));
+vi.mock("./graph-ai-workspace", () => ({
+  GraphAiWorkspace: ({
+    ai,
+    onMissing,
+  }: {
+    ai: { sessionId: string };
+    onMissing: () => void;
+  }) => (
+    <div aria-label="Design conversation">
+      <p>{ai.sessionId}</p>
+      <button type="button" onClick={onMissing}>
+        Conversation lost
+      </button>
+    </div>
+  ),
 }));
 // Canvas pointer/drag behavior is covered in browser acceptance; these tests isolate document state and proposal semantics.
 vi.mock("./graph-canvas", () => ({
@@ -179,17 +224,50 @@ function generate() {
   });
   fireEvent.click(screen.getByRole("button", { name: "Generate workflow" }));
 }
+function agent(id: string, name: string) {
+  return {
+    id,
+    name,
+    model: "deepseek",
+    custom_args: [] as string[],
+    runtime_config: { effort: "high" },
+  };
+}
 const draftKey = graphDraftKey("ws-1", "user-1");
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
   useGraphDraftStore.setState({ documents: {} });
   mocks.enabled = true;
+  mocks.builderEnabled = false;
+  mocks.runtimes = [];
+  mocks.agents = [agent("agent-1", "Builder")];
   mocks.actor.role = "admin";
   mocks.save.mockResolvedValue({ id: "graph-1", revision: 1 });
 });
 
 describe("AI graph proposals", () => {
+  it("defaults agent nodes to 16 attempts and six hours without fixed upper limits", () => {
+    manualEditor();
+    expect(screen.getByLabelText(labels.editor.attempts)).toHaveValue(16);
+    expect(screen.getByLabelText(labels.editor.timeout)).toHaveValue(21600);
+    expect(screen.getByLabelText(labels.editor.attempts)).not.toHaveAttribute(
+      "max",
+    );
+    expect(screen.getByLabelText(labels.editor.timeout)).not.toHaveAttribute("max");
+    fireEvent.change(screen.getByLabelText(labels.editor.attempts), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText(labels.editor.timeout), {
+      target: { value: "172800" },
+    });
+    expect(
+      useGraphDraftStore.getState().documents[draftKey]?.definition.nodes[1],
+    ).toMatchObject({ maxAttempts: 100, timeoutSeconds: 172800 });
+    fireEvent.click(screen.getByRole("button", { name: "Add node" }));
+    expect(screen.getByLabelText(labels.editor.attempts)).toHaveValue(16);
+    expect(screen.getByLabelText(labels.editor.timeout)).toHaveValue(21600);
+  });
   it("edits a readable step name without changing execution bindings", () => {
     manualEditor();
     fireEvent.change(screen.getByLabelText("Step name"), {
@@ -312,6 +390,52 @@ describe("AI graph proposals", () => {
     expect(screen.getByLabelText("Name")).toBeEnabled();
   });
 });
+
+describe("Chat authoring", () => {
+  beforeEach(() => {
+    mocks.builderEnabled = true;
+  });
+  it("hands AI mode to the setup step until a conversation exists", () => {
+    editor();
+    expect(screen.getByText("Setup step")).toBeVisible();
+    // The one-shot form and its request state belong to the other path.
+    expect(
+      screen.queryByRole("button", { name: "Generate workflow" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("combobox", { name: "Workflow agent" }),
+    ).toBeNull();
+  });
+  it("opens the bound conversation and falls back to the setup step without it", () => {
+    editor();
+    act(() =>
+      useGraphDraftStore.getState().bindAi(draftKey, {
+        sessionId: "session-1",
+        agentId: "carrier-1",
+        executorId: "agent-1",
+        scopeIds: ["agent-1"],
+        approverId: "member-1",
+        runtimeId: "runtime-1",
+        appliedMessageId: null,
+      }),
+    );
+    expect(screen.getByLabelText("Design conversation")).toHaveTextContent(
+      "session-1",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Conversation lost" }));
+    expect(screen.getByText("Setup step")).toBeVisible();
+    expect(useGraphDraftStore.getState().documents[draftKey]?.ai).toBeNull();
+  });
+  it("keeps the one-shot form on a server that has no builder", () => {
+    mocks.builderEnabled = false;
+    editor();
+    expect(
+      screen.getByRole("button", { name: "Generate workflow" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Setup step")).toBeNull();
+  });
+});
+
 
 describe("Graph production editor", () => {
   it("recovers a workspace/user draft after unmount and offers explicit discard", () => {

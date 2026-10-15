@@ -187,6 +187,8 @@ export function GraphCanvas({
   disabled,
   onError,
   states,
+  details,
+  overview,
 }: {
   definition: GraphDefinition;
   onChange?: (definition: GraphDefinition) => void;
@@ -195,6 +197,15 @@ export function GraphCanvas({
   disabled?: boolean;
   onError?: (error: Error) => void;
   states?: Record<string, string>;
+  /** Per-node line shown under the label. The run page passes what a node produced. */
+  details?: Record<string, string>;
+  /**
+   * Read the graph as a whole: ignore the viewport whoever last edited the
+   * draft left behind, and let the fit zoom out far enough to include every
+   * node. A run is read as a shape, so half of it hidden past the pane edge is
+   * the worst outcome; an editor is read node by node, so it stays legible.
+   */
+  overview?: boolean;
 }) {
   const labels = useGraphNodeLabels();
   const { t } = useT("graphs");
@@ -214,9 +225,10 @@ export function GraphCanvas({
       node,
       label: labels[node.type] ?? node.type,
       detail:
-        node.instructions?.split(/\r?\n/)[0] ??
-        node.http?.url ??
-        node.script?.language ??
+        details?.[node.nodeKey] ||
+        node.instructions?.split(/\r?\n/)[0] ||
+        node.http?.url ||
+        node.script?.language ||
         "",
       state: states?.[node.nodeKey],
     },
@@ -267,9 +279,9 @@ export function GraphCanvas({
         edges={edges}
         nodeTypes={nodeTypes}
         style={style}
-        fitView={!definition.layout?.viewport}
-        fitViewOptions={{ minZoom: 0.65, maxZoom: 1, padding: 0.12 }}
-        defaultViewport={definition.layout?.viewport}
+        fitView={overview || !definition.layout?.viewport}
+        fitViewOptions={{ minZoom: overview ? 0.3 : 0.65, maxZoom: 1, padding: 0.12 }}
+        defaultViewport={overview ? undefined : definition.layout?.viewport}
         minZoom={0.1}
         maxZoom={4}
         nodesDraggable={editable}

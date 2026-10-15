@@ -46,8 +46,21 @@ its `id` (never the commit SHA); the daemon verifies and pushes
 the managed ref after execution stops. For `verify_commit`, keep HEAD at the
 frozen candidate, leave the checkout clean and return its `tested_commit_sha`.
 Do not replace structured submission with a comment, PR, exit code or a manual
-issue status change. Submission is staged: submit once, then exit so the daemon
-can provide its stopped receipt and the engine can validate the result.
+issue status change. Submission is staged: submit once, publish the report below,
+then exit so the daemon can provide its stopped receipt and the engine can
+validate the result.
+
+After a successful submit or block, post one concise end-of-attempt report with
+`multica graph node comment --body-file <path>`. Write the UTF-8 file inside the
+task workdir but outside the repository checkout. Use the task's language and
+roughly 100-300 Chinese characters, or a similarly brief paragraph or up to
+three bullets in other languages. Summarize completed work, key findings,
+checks actually performed, and remaining issues; for a blocker or
+`needs_changes`, explain what is needed next. Omit tool logs, raw JSON, internal
+IDs and local paths. State that the result or blocker was submitted and awaits
+validation, without claiming Graph acceptance, artifact delivery or human
+approval. Publish at most one end-of-attempt report per attempt. If posting
+fails, exit without changing or resubmitting the staged result.
 
 Human operators use `multica graph list`, `graph get <run-id>`, `graph run`, and
 the revision-checked control commands. Check `multica graph --help` and each
@@ -57,14 +70,25 @@ also require `--expected-revision` from a fresh read. Approvals additionally
 bind `--approval-id` and `--candidate-digest`. Graph task credentials cannot
 use these management commands.
 
-Human users can also open the workspace Graph page and describe a workflow
-with **Create with AI**, selecting an agent and final approver. The server's
-configured AI provider returns an editable workflow draft, including typed
-branches, parallel paths and bounded loops when requested; it does not save,
-publish or run it. Review the steps, save the draft, then publish and start
-through the normal human controls. This authoring feature does not give Graph
-node credentials permission to create or modify workflows. If the server AI
-provider is unconfigured, manual creation remains available.
+Human users can also open the workspace Graph page and design a workflow in a
+conversation with **Create with AI**: they name the participating agents, one
+default executor and a final approver, and every later turn is an ordinary chat
+message. The server does not generate anything itself — it runs that
+conversation on the default executor's runtime, and a reply may end with one
+`<graph_draft>` block holding a complete workflow definition, which the page
+merges into the draft beside it as the reply arrives. The draft may spread its
+steps across the participating agents, and it uses typed branches, parallel
+paths and bounded loops when the description calls for them. Nothing is saved,
+published or run by the conversation: the requester opens the editor, saves the
+draft, then publishes and starts through the normal human controls. If no agent
+can serve the conversation, manual creation remains available.
+
+An agent answering in one of those conversations is a Graph authoring task, and
+reads it with the task-scoped credential of that request — the same credential
+rule as a Graph node. It needs no Graph-specific command: it replies in the chat
+like any other task, and the contract for the `<graph_draft>` block arrives with
+the turn. There is no submission budget — refine the definition for as many
+turns as the requester keeps asking, exactly like any other conversation.
 
 ## PR linking and close intent are two distinct contracts
 

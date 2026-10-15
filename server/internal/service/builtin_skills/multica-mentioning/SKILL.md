@@ -28,6 +28,11 @@ Use `multica graph node comment --body <text>` for a diagnostic comment on the
 current node issue, or `--body-file <path>` for a UTF-8 body in the task workdir.
 This command gets the issue identity from scoped Graph context without reading
 the live issue. Such comments neither change the fixed input nor trigger work.
+After a successful node submit or block, use it to publish one concise
+end-of-attempt report before exiting. Use the task's language, summarize work,
+findings, actual checks and remaining issues, and state that validation is
+pending. Do not claim Graph acceptance, artifact delivery or human approval.
+If posting fails, exit without changing or resubmitting the staged result.
 The scoped credential does not grant ordinary issue reads or delegation APIs.
 The mention routing rules below describe ordinary issues.
 

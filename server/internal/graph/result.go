@@ -25,7 +25,12 @@ type AttemptIdentity struct {
 }
 
 func validateAttemptIdentity(i AttemptIdentity) error {
-	if strings.TrimSpace(i.RunID) == "" || strings.TrimSpace(i.NodeRunID) == "" || strings.TrimSpace(i.TaskID) == "" || i.AttemptNo < 1 || i.AttemptNo > 3 || i.ExecutionGeneration < 1 {
+	// AttemptNo has no ceiling of its own. A person clearing a blocked node
+	// authorizes an attempt beyond the node's published max_attempts, and that
+	// attempt carries a number above the published budget like any other. The
+	// ceiling is enforced where the budget is known: on the manifest that
+	// records it for the attempt (see AttemptManifest.ceiling).
+	if strings.TrimSpace(i.RunID) == "" || strings.TrimSpace(i.NodeRunID) == "" || strings.TrimSpace(i.TaskID) == "" || i.AttemptNo < 1 || i.ExecutionGeneration < 1 {
 		return denied("stale_attempt", "attempt identity is incomplete")
 	}
 	if !hashPattern.MatchString(i.InputHash) {
@@ -74,11 +79,45 @@ type NodeSpec struct {
 	InstanceKey     string           `json:"instance_key,omitempty"`
 }
 
+// HumanNote is what a person wrote when they cleared a node's block. A node's
+// input is frozen for the node's whole life, so this is the only channel by
+// which a human instruction reaches the attempt that follows it.
+type HumanNote struct {
+	Reason   string    `json:"reason"`
+	MemberID string    `json:"member_id,omitempty"`
+	At       time.Time `json:"at"`
+}
+
+// AttemptGrant is what people added to a node's budget on top of the published
+// max_attempts, together with what they said when they added it. The zero value
+// means the attempt runs on the published budget alone.
+type AttemptGrant struct {
+	Granted int
+	Note    *HumanNote
+}
+
 type AttemptManifest struct {
 	ProtocolVersion int             `json:"protocol_version"`
 	Identity        AttemptIdentity `json:"identity"`
 	NodeSpec        NodeSpec        `json:"node_spec"`
 	NodeSpecHash    string          `json:"node_spec_hash"`
+	// AttemptCeiling is the highest attempt number this manifest authorizes: the
+	// node's published max_attempts plus every attempt people granted by clearing
+	// a block. It is frozen into the manifest rather than re-derived so a stored
+	// manifest can be validated on its own. Zero means no one has granted
+	// anything and the published budget stands - which is why it is omitted for
+	// every ordinary attempt and appears only once a person has widened it.
+	AttemptCeiling int `json:"attempt_ceiling,omitempty"`
+	// HumanNote is the note from the grant that produced this attempt, if any.
+	HumanNote *HumanNote `json:"human_note,omitempty"`
+}
+
+// Ceiling is the attempt number this manifest may not exceed.
+func (m AttemptManifest) Ceiling() int {
+	if m.AttemptCeiling > 0 {
+		return m.AttemptCeiling
+	}
+	return m.NodeSpec.Node.MaxAttempts
 }
 
 func CanonicalNodeSpec(spec NodeSpec) ([]byte, string, error) {
@@ -132,8 +171,11 @@ func CanonicalNodeSpec(spec NodeSpec) ([]byte, string, error) {
 	return canonicalValue(spec)
 }
 
-// NewAttemptManifest deep-copies the spec so caller mutations cannot rewrite an existing attempt.
-func NewAttemptManifest(spec NodeSpec, identity AttemptIdentity) (AttemptManifest, error) {
+// NewAttemptManifest deep-copies the spec so caller mutations cannot rewrite an
+// existing attempt. grant carries the attempts people authorized beyond the
+// published budget, which is how a node legitimately reaches an attempt number
+// above its max_attempts.
+func NewAttemptManifest(spec NodeSpec, identity AttemptIdentity, grant AttemptGrant) (AttemptManifest, error) {
 	var manifest AttemptManifest
 	if err := validateAttemptIdentity(identity); err != nil {
 		return manifest, err
@@ -141,7 +183,11 @@ func NewAttemptManifest(spec NodeSpec, identity AttemptIdentity) (AttemptManifes
 	if identity.InputHash != spec.InputHash {
 		return manifest, denied("input_mismatch", "attempt and node input hashes differ")
 	}
-	if identity.AttemptNo > spec.Node.MaxAttempts {
+	if grant.Granted < 0 {
+		return manifest, denied("budget_exhausted", "granted attempts cannot be negative")
+	}
+	ceiling := spec.Node.MaxAttempts + grant.Granted
+	if identity.AttemptNo > ceiling {
 		return manifest, denied("budget_exhausted", "attempt exceeds the node budget")
 	}
 	raw, hash, err := CanonicalNodeSpec(spec)
@@ -152,7 +198,11 @@ func NewAttemptManifest(spec NodeSpec, identity AttemptIdentity) (AttemptManifes
 	if err := json.Unmarshal(raw, &frozen); err != nil {
 		return manifest, err
 	}
-	return AttemptManifest{ProtocolVersion: ProtocolVersion, Identity: identity, NodeSpec: frozen, NodeSpecHash: hash}, nil
+	manifest = AttemptManifest{ProtocolVersion: ProtocolVersion, Identity: identity, NodeSpec: frozen, NodeSpecHash: hash, HumanNote: grant.Note}
+	if grant.Granted > 0 {
+		manifest.AttemptCeiling = ceiling
+	}
+	return manifest, nil
 }
 
 func CanonicalManifest(manifest AttemptManifest) ([]byte, string, error) {
@@ -172,7 +222,12 @@ func CanonicalManifest(manifest AttemptManifest) ([]byte, string, error) {
 	if manifest.Identity.InputHash != manifest.NodeSpec.InputHash {
 		return nil, "", denied("input_mismatch", "attempt and node input hashes differ")
 	}
-	if manifest.Identity.AttemptNo > manifest.NodeSpec.Node.MaxAttempts {
+	// A recorded ceiling may widen the published budget (a person granted an
+	// attempt) but never narrow it.
+	if manifest.AttemptCeiling > 0 && manifest.AttemptCeiling < manifest.NodeSpec.Node.MaxAttempts {
+		return nil, "", denied("spec_mismatch", "attempt ceiling is below the node budget")
+	}
+	if manifest.Identity.AttemptNo > manifest.Ceiling() {
 		return nil, "", denied("budget_exhausted", "attempt exceeds the node budget")
 	}
 	return canonicalValue(manifest)

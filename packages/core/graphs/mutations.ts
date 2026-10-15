@@ -48,6 +48,7 @@ export function useRotateGraphTriggerSecret() {
   });
 }
 
+/** The legacy server-model path. Kept as the fallback while it is still live. */
 export function useGenerateGraph(wsId: string) {
   return useMutation({
     mutationKey: [...graphKeys.all(wsId), "generate"],

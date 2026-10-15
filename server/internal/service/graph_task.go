@@ -29,8 +29,11 @@ func graphRefreshAttempts(ctx context.Context, tx pgx.Tx, run *GraphRunRecord) e
 				a.Receipt = &r
 			}
 		}
-		n.CanResolveBlock = run.ControlState == "run" && !graphTerminal(run.State) && graphRetryAllowed(*n) == nil
-		n.CanRetry = n.CanResolveBlock && len(n.Attempts) > 0
+		// Clearing a block is a person's decision, so it is not gated by the
+		// agent's attempt budget; retrying on that budget is the narrower action
+		// and keeps the stricter gate.
+		n.CanResolveBlock = run.ControlState == "run" && !graphTerminal(run.State) && graphResolveBlockAllowed(*n) == nil
+		n.CanRetry = run.ControlState == "run" && !graphTerminal(run.State) && graphRetryAllowed(*n) == nil && len(n.Attempts) > 0
 		if run.SchemaVersion == 2 && n.NodeType == "http" {
 			n.CanRetry = run.ControlState == "run" && !graphTerminal(run.State) && n.State == "blocked" && n.Effect != nil && n.Effect.State != "dispatched" && n.Effect.Attempts < 3
 			n.CanResolveBlock = n.CanRetry
@@ -414,4 +417,54 @@ func graphStopUnclaimedTx(ctx context.Context, tx pgx.Tx, attempt *GraphAttemptR
 	}
 	_, err = tx.Exec(ctx, `UPDATE graph_task_attempt SET stopped_at=$2,final_receipt=$3 WHERE task_id=$1`, attempt.TaskID, now, receipt)
 	return err == nil, err
+}
+
+// graphConfirmStoppedTx records a person's answer to an execution_unknown block.
+//
+// A stop receipt is normally the daemon's word that the provider process is
+// gone. When a runtime dies mid-attempt there is no daemon left to send one: the
+// platform fails the task itself and blocks the node as execution_unknown, which
+// is a question addressed to a person, not to the agent. Clearing the block is
+// the only place that question can be answered, so the answer has to be recorded
+// as the attempt's stop. Without it every decision that waits for a stop - the
+// reconciler's own "confirm the previous process stopped" gate, a run cancel, a
+// later retry - waits forever on a receipt that can never arrive, and the person
+// is refused by the very condition the platform asked them about.
+//
+// The receipt names the server and the member who decided, and reports the
+// provider exit as unknown rather than inventing one: what is known is that a
+// person confirmed the process is gone, not how it ended. The attempt's bound
+// executor_id is deliberately left alone.
+func graphConfirmStoppedTx(ctx context.Context, tx pgx.Tx, ws string, attempt *GraphAttemptRecord, member string) error {
+	if attempt.StoppedAt != nil {
+		return nil
+	}
+	executor := "server:human-confirmed"
+	if member != "" {
+		executor = "server:human-confirmed:" + member
+	}
+	now := time.Now().UTC()
+	receipt := GraphTaskReceipt{
+		Identity:       attempt.Manifest.Identity,
+		ProviderExit:   "unknown",
+		DeliveryStatus: "not_required",
+		ExecutorID:     executor,
+		StoppedAt:      now,
+	}
+	raw, err := graphJSON(receipt)
+	if err != nil {
+		return err
+	}
+	// A daemon receipt that lands between the read and this write is the better
+	// evidence and keeps the row; the next refresh picks it up.
+	tag, err := tx.Exec(ctx, `UPDATE graph_task_attempt SET stopped_at=$3,final_receipt=$4 WHERE workspace_id=$1 AND task_id=$2 AND stopped_at IS NULL`, ws, attempt.TaskID, now, raw)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil
+	}
+	attempt.StoppedAt = &now
+	attempt.Receipt = &receipt
+	return nil
 }

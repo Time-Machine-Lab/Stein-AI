@@ -11,39 +11,58 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { Agent, MemberWithUser } from "@multica/core/types";
+import type { GraphGenerationMode } from "@multica/core/graphs";
+import { errorCode } from "@multica/core/api/client";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../i18n";
 import { Field } from "./shared";
 import { GraphActorPicker } from "./graph-actor-picker";
 
+/**
+ * The one-shot form: describe the workflow, hand it to one agent, get one
+ * proposal back.
+ *
+ * This is the path a deployment without a builder still uses — the server
+ * generates from its own LLM client and the result arrives as a proposal to
+ * apply or discard. Where a builder exists the editor never renders this, and
+ * the conversation replaces both the form and the apply step.
+ */
 export function GraphAiComposer({
   prompt,
   onPromptChange,
-  agentId,
-  onAgentChange,
+  mode,
+  defaultAgentId,
+  onDefaultAgentChange,
   approverId,
   onApproverChange,
   agents,
   members,
-  enabled,
   loading,
+  disabled,
   pending,
+  error,
   hasDraft,
   onGenerate,
   onManual,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
-  agentId: string;
-  onAgentChange: (value: string) => void;
+  mode: GraphGenerationMode;
+  defaultAgentId: string;
+  onDefaultAgentChange: (value: string) => void;
   approverId: string;
   onApproverChange: (value: string) => void;
   agents: Agent[];
   members: MemberWithUser[];
-  enabled: boolean;
+  /** The generation-options query is still in flight. */
   loading: boolean;
+  /** The editor cannot start authoring right now. */
+  disabled?: boolean;
+  /** The request is in flight. */
   pending: boolean;
+  /** The last rejected request, from before a task existed. */
+  error: unknown;
   hasDraft: boolean;
   onGenerate: () => void;
   onManual: () => void;
@@ -54,6 +73,46 @@ export function GraphAiComposer({
     t(($) => $.studio.example_release),
     t(($) => $.studio.example_content),
   ];
+  const agentOptions = agents.map((agent) => ({
+    value: agent.id,
+    label: agent.name,
+    avatarUrl: agent.avatar_url,
+  }));
+  const locked = pending;
+  // The request is the only source of failure on this path: one synchronous
+  // call, so there is no task whose status could also report one.
+  const requestCode = errorCode(error);
+  const failureCode = requestCode;
+  const failureText =
+    error
+      ? (() => {
+          switch (failureCode) {
+            case "generation_timeout":
+              return t(($) => $.studio.error_timeout);
+            case "generation_invalid":
+              return t(($) => $.studio.error_invalid);
+            case "generation_busy":
+              return t(($) => $.studio.error_busy);
+            case "generation_unavailable":
+              return t(($) => $.studio.unavailable);
+            case "capability_missing":
+              return t(($) => $.studio.error_capability);
+            case "agent_unavailable":
+              return t(($) => $.studio.error_agent);
+            case "forbidden":
+              return t(($) => $.studio.error_forbidden);
+            case "generation_failed":
+              return t(($) => $.studio.error_failed);
+            default:
+              // A newer backend can report a code this build does not know.
+              // Show what the server said rather than inventing copy for it.
+              return (
+                (error instanceof Error ? error.message : "") ||
+                t(($) => $.studio.error_failed)
+              );
+          }
+        })()
+      : "";
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-5 py-8 sm:px-8 lg:py-12">
       <div className="mb-8 max-w-2xl">
@@ -80,7 +139,7 @@ export function GraphAiComposer({
                     onChange={(event) => onPromptChange(event.target.value)}
                     placeholder={t(($) => $.studio.placeholder)}
                     maxLength={12000}
-                    disabled={pending}
+                    disabled={locked}
                     className="min-h-40 resize-y border-0 bg-transparent px-0 text-body leading-7 shadow-none focus-visible:ring-0 dark:bg-transparent"
                   />
                 )}
@@ -91,16 +150,12 @@ export function GraphAiComposer({
                     <GraphActorPicker
                       id={id}
                       label={t(($) => $.studio.agent)}
-                      value={agentId}
-                      onChange={onAgentChange}
-                      disabled={pending}
+                      value={defaultAgentId}
+                      onChange={onDefaultAgentChange}
+                      disabled={locked}
                       isAgent
                       placeholder={t(($) => $.editor.choose_agent)}
-                      options={agents.map((agent) => ({
-                        value: agent.id,
-                        label: agent.name,
-                        avatarUrl: agent.avatar_url,
-                      }))}
+                      options={agentOptions}
                     />
                   )}
                 </Field>
@@ -111,7 +166,7 @@ export function GraphAiComposer({
                       label={t(($) => $.editor.approver)}
                       value={approverId}
                       onChange={onApproverChange}
-                      disabled={pending}
+                      disabled={locked}
                       placeholder={t(($) => $.editor.choose_approver)}
                       options={members.map((member) => ({
                         value: member.id,
@@ -123,9 +178,9 @@ export function GraphAiComposer({
                 </Field>
               </div>
               <p className="mt-3 text-caption leading-5 text-muted-foreground">
-                {agents.length
-                  ? t(($) => $.studio.agent_hint)
-                  : t(($) => $.studio.no_agents)}
+                {!agents.length
+                  ? t(($) => $.studio.no_agents)
+                  : t(($) => $.studio.agent_hint)}
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-5 py-4 sm:px-6">
@@ -135,27 +190,41 @@ export function GraphAiComposer({
               <Button
                 type="button"
                 disabled={
-                  !enabled ||
+                  mode === "unavailable" ||
                   loading ||
-                  pending ||
+                  locked ||
+                  disabled ||
                   !prompt.trim() ||
-                  !agentId ||
+                  !defaultAgentId ||
                   !approverId
                 }
                 onClick={onGenerate}
               >
-                {pending ? (
+                {locked ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <Sparkles className="size-4" />
                 )}
-                {pending
+                {locked
                   ? t(($) => $.studio.generating)
                   : t(($) => $.studio.generate)}
               </Button>
             </div>
           </div>
-          {!loading && !enabled && (
+          {failureText && (
+            <div
+              role="alert"
+              className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-caption leading-5 text-destructive"
+            >
+              <p className="break-words">{failureText}</p>
+              {failureCode === "generation_busy" && (
+                <p className="mt-1 break-words">
+                  {t(($) => $.studio.retry_hint)}
+                </p>
+              )}
+            </div>
+          )}
+          {!loading && mode === "unavailable" && !disabled && (
             <p className="mt-3 rounded-lg border border-warning/25 bg-warning/5 px-4 py-3 text-caption leading-5 text-muted-foreground">
               {t(($) => $.studio.unavailable)}
             </p>
@@ -174,7 +243,7 @@ export function GraphAiComposer({
                 <button
                   key={example}
                   type="button"
-                  disabled={pending}
+                  disabled={locked}
                   onClick={() => onPromptChange(example)}
                   className="rounded-lg border px-3 py-2 text-left text-caption leading-5 transition-colors hover:border-primary/30 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 >

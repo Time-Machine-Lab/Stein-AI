@@ -1,5 +1,6 @@
 import type { RuntimeDevice, RuntimeModel } from "../types";
 import type { AgentDraft } from "./draft";
+import { escapeJsonStringControlCharacters } from "../model-json";
 
 /**
  * Wire format between the Agent Creation Studio and the hidden builder agent.
@@ -50,46 +51,6 @@ export function parseBuilderDraft(content: string): BuilderDraftPayload | null {
       return null;
     }
   }
-}
-
-function escapeJsonStringControlCharacters(value: string): string {
-  let result = "";
-  let inString = false;
-  let escaped = false;
-
-  for (const character of value) {
-    if (!inString) {
-      result += character;
-      if (character === '"') inString = true;
-      continue;
-    }
-    if (escaped) {
-      result += character;
-      escaped = false;
-      continue;
-    }
-    if (character === "\\") {
-      result += character;
-      escaped = true;
-      continue;
-    }
-    if (character === '"') {
-      result += character;
-      inString = false;
-      continue;
-    }
-    if (character === "\n") {
-      result += "\\n";
-    } else if (character === "\r") {
-      result += "\\r";
-    } else if (character === "\t") {
-      result += "\\t";
-    } else {
-      result += character;
-    }
-  }
-
-  return result;
 }
 
 /**
