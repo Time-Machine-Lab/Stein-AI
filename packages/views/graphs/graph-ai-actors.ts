@@ -33,7 +33,8 @@ export function graphAgentReady(
   runtimes: RuntimeDevice[],
   currentUserId: string | null,
 ): boolean {
-  if (!agent.model.trim() || !isAgentRuntimeBound(agent)) return false;
+  if (agent.archived_at || !agent.model.trim() || !isAgentRuntimeBound(agent))
+    return false;
   const runtime = runtimes.find((device) => device.id === agent.runtime_id);
   return (
     !!runtime &&
@@ -46,12 +47,9 @@ export function graphAgentReady(
  * The directory for one conversation, in alias order: index 0 is
  * `agent_default`, so the executor the user chose has to come first.
  *
- * An agent in the selection that is no longer in the workspace is dropped
- * rather than passed through as an empty entry: the model cannot assign work to
- * someone who is gone, and a nameless alias would be a step the user cannot
- * publish. An agent the *draft* still uses is not lost by that — the protocol
- * appends actors the directory omits, so it survives as an unnamed out-of-scope
- * teammate.
+ * Keep unavailable teammates in their original slots so an in-flight reply
+ * cannot resolve an alias to a different teammate. The model sees those slots
+ * as out of scope and not ready for execution.
  */
 export function graphBuilderDirectory(
   selection: Pick<GraphDraftAi, "scopeIds" | "approverId">,
@@ -60,15 +58,11 @@ export function graphBuilderDirectory(
   currentUserId: string | null,
 ): GraphBuilderDirectory {
   const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  const ordered = [
-    ...(byId.has(selection.scopeIds[0] ?? "")
-      ? [selection.scopeIds[0]!]
-      : []),
-    ...selection.scopeIds.slice(1).filter((id) => byId.has(id)),
-  ];
   return {
-    agents: ordered.map((id) => {
-      const agent = byId.get(id)!;
+    agents: selection.scopeIds.map((id) => {
+      const agent = byId.get(id);
+      if (!agent || agent.archived_at)
+        return { id, name: "", inScope: false, graphReady: false };
       const runtime = runtimes.find((device) => device.id === agent.runtime_id);
       return {
         id: agent.id,
