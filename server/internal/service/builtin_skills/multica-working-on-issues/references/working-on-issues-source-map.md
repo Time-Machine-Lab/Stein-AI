@@ -17,6 +17,13 @@
   skips ordinary close-intent status advancement for Graph-owned issues.
 - `server/internal/daemon/graph.go`: `buildGraphPrompt`, `finalizeGraphGit` and
   `finalizeGraphTask` define structured delivery and stopped receipts.
+- `server/internal/daemon/graph.go` (`buildGraphPrompt`) and
+  `server/internal/handler/graph_snapshot.go` (`graphBuiltinSkill`) instruct the
+  agent to post one short report after a successful submit or block, before
+  exiting. The report distinguishes submitted work from platform acceptance;
+  a comment failure must not change or resubmit the staged result.
+  `server/cmd/multica/cmd_graph.go` (`runGraphNodeComment`) resolves the current
+  node issue from scoped context and posts the report through the comment API.
 - `server/internal/graph/result.go`: `ValidateResult` enforces execution-mode
   artifacts (artifact ids must be UUIDs), output schema, diagnostics and the
   tested candidate SHA.

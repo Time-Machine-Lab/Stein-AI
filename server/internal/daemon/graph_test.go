@@ -149,7 +149,15 @@ func TestGraphPromptHasOnlyFrozenNodeWorkflow(t *testing.T) {
 	task := graphTestTask(t)
 	task.ActiveSiblingRuns = []ActiveSiblingRunData{{TaskID: "unrelated"}}
 	prompt := BuildPrompt(task, "codex")
-	for _, required := range []string{"multica graph node context", "multica graph node submit", "Build exactly the frozen goal.", `"goal":"build"`} {
+	for _, required := range []string{
+		"multica graph node context", "multica graph node submit", "Build exactly the frozen goal.", `"goal":"build"`,
+		"After a successful submit or block, publish one concise end-of-attempt report",
+		"multica graph node comment --body-file <path>, then exit",
+		"in the task's language",
+		"work completed, key findings, checks actually performed, and any remaining issues",
+		"Do not claim Graph acceptance, artifact delivery, or human approval",
+		"If posting fails, exit without changing or resubmitting the staged result",
+	} {
 		if !strings.Contains(prompt, required) {
 			t.Errorf("missing %q", required)
 		}

@@ -27,6 +27,12 @@ func TestGraphExecutionSkillStatesOutcomeConsequences(t *testing.T) {
 		{"a verdict belongs in the output", "Put your verdict in the output and submit outcome=pass"},
 		{"when needs_changes is right", "a run that must stop so a person can change"},
 		{"diagnostics-only submissions stay allowed", "cannot produce an output the schema accepts"},
+		{"end-of-attempt report", "After a successful submit or block, publish one concise end-of-attempt report"},
+		{"scoped comment before exit", "multica graph node comment --body-file <path>, then exit"},
+		{"readable report", "in the task's language"},
+		{"evidence-based summary", "work completed, key findings, checks actually performed, and any remaining issues"},
+		{"acceptance is not yet confirmed", "Do not claim Graph acceptance, artifact delivery, or human approval"},
+		{"comment failure preserves result", "If posting fails, exit without changing or resubmitting the staged result"},
 	}
 	for _, req := range required {
 		if !strings.Contains(skill, req.needle) {
