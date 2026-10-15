@@ -68,7 +68,7 @@
   legacy form, reached only when the server has no builder.
 - Migrations `372_graph_generation`, `373_graph_generation_id` and
   `374_graph_generation_requester` created the `graph_generation` table;
-  `375_drop_graph_generation` drops it now that no request is stored.
+  `379_drop_graph_generation` drops it now that no request is stored.
 
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`
@@ -286,5 +286,5 @@ grep -n 'func (h \*Handler) CreateGraphBuilderSession\|func (h \*Handler) ListGr
 grep -n 'func (h \*Handler) graphAgentEligible\|func (h \*Handler) GetGraphGenerationOptions\|func (h \*Handler) GenerateGraph' internal/handler/graph_generation.go
 grep -n 'export function encodeGraphBuilderInput\|export function parseGraphDraft\|export function mergeGraphDraft\|export function definitionToAliases' packages/core/graphs/authoring-protocol.ts
 grep -n 'CREATE TABLE.*graph_generation'   migrations/372_graph_generation.up.sql
-grep -n 'DROP TABLE'                       migrations/375_drop_graph_generation.up.sql
+grep -n 'DROP TABLE'                       migrations/379_drop_graph_generation.up.sql
 ```

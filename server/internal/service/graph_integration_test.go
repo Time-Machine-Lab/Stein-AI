@@ -32,7 +32,7 @@ import (
 // missed.
 const (
 	graphMigrationFirst = 332
-	graphMigrationLast  = 376
+	graphMigrationLast  = 379
 	graphMigrationSkip  = 358
 )
 

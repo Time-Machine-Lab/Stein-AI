@@ -5,7 +5,6 @@
 -- payload or an alias map, because there is no longer a single-shot submission
 -- to budget, replay or reject.
 --
--- The table goes with the pipeline that owned it. Migration 372-374 stay in the
--- tree: this repository appends migrations and never rewrites history, so a
--- database that ran them still has the same migration log as one created today.
+-- Migrations 377 and 378 remove the indexes first, so their down migrations
+-- restore them individually after this migration restores the table.
 DROP TABLE IF EXISTS graph_generation;
