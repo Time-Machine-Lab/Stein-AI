@@ -19,6 +19,7 @@ import {
   type JsonObject,
 } from "@multica/core/graphs";
 import { runtimeListOptions } from "@multica/core/runtimes";
+import type { AgentRuntime } from "@multica/core/types";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -142,29 +143,35 @@ export function GraphStartForm({
       label: `${issue.identifier} · ${issue.title}`,
       description: issue.status,
     }));
-  const supportedRuntimes = useMemo(
-    () =>
-      (runtimes.data ?? []).filter(
-        (runtime) =>
-          runtime.status === "online" && isGraphRuntimeSupported(runtime),
-      ),
+  const machines = useMemo(
+    () => buildRuntimeMachines(runtimes.data ?? [], { now: Date.now() }),
     [runtimes.data],
   );
-  const runtimeFor = (path: string, agentId?: string, requireV2 = false) => {
-    const candidate =
-      bindings[path] ??
-      agents.data?.find((agent) => agent.id === agentId)?.runtime_id ??
-      "";
-    return supportedRuntimes.some(
-      (runtime) =>
-        runtime.id === candidate &&
-        isGraphRuntimeSupported(
-          runtime,
-          requireV2 || Boolean(runtime.profile_id),
-        ),
+  const runtimeReason = (
+    runtime: AgentRuntime | undefined,
+    requireV2 = false,
+  ) => {
+    if (!runtime) return t(($) => $.start.runtime_missing);
+    if (runtime.status !== "online") return t(($) => $.start.runtime_offline);
+    if (
+      !isGraphRuntimeSupported(
+        runtime,
+        requireV2 || Boolean(runtime.profile_id),
+      )
     )
-      ? candidate
-      : "";
+      return t(($) => $.start.runtime_upgrade);
+    return "";
+  };
+  const runtimeFor = (path: string, agentId?: string, requireV2 = false) => {
+    const agent = agents.data?.find((agent) => agent.id === agentId);
+    if (!agent || agent.archived_at) return "";
+    const candidate = agent.runtime_id || bindings[path] || "";
+    return runtimeReason(
+      runtimes.data?.find((runtime) => runtime.id === candidate),
+      requireV2,
+    )
+      ? ""
+      : candidate;
   };
   if (!version)
     return (
@@ -186,13 +193,32 @@ export function GraphStartForm({
         );
       if (!rootIssueId && !onConfigure)
         throw new Error(t(($) => $.production.search_issue));
-      if (
-        steps.some(
-          ({ node, path }) =>
-            !runtimeFor(path, node.agentId, node.type === "script"),
-        )
-      )
-        throw new Error(t(($) => $.production.runtime_unavailable));
+      const unavailable = steps.find(
+        ({ node, path }) =>
+          !runtimeFor(path, node.agentId, node.type === "script"),
+      );
+      if (unavailable) {
+        const agent = agents.data?.find(
+          (agent) => agent.id === unavailable.node.agentId,
+        );
+        throw new Error(
+          t(($) => $.start.runtime_node_error, {
+            node: unavailable.node.label || unavailable.path,
+            agent: agent?.name || unavailable.node.agentId,
+            reason:
+              agent && !agent.archived_at
+                ? runtimeReason(
+                    runtimes.data?.find(
+                      (runtime) =>
+                        runtime.id ===
+                        (agent.runtime_id || bindings[unavailable.path]),
+                    ),
+                    unavailable.node.type === "script",
+                  )
+                : t(($) => $.start.agent_unavailable),
+          }),
+        );
+      }
       if (
         needsRepository &&
         (!repositoryId || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(baseSha))
@@ -247,6 +273,7 @@ export function GraphStartForm({
           localError ??
           start.error ??
           runtimes.error ??
+          agents.error ??
           repositories.error ??
           commits.error ??
           issues.error ??
@@ -342,13 +369,20 @@ export function GraphStartForm({
           </details>
         </section>
         {steps.map(({ node, path }) => {
-          const eligible = supportedRuntimes.filter((runtime) =>
-            isGraphRuntimeSupported(
-              runtime,
-              node.type === "script" || Boolean(runtime.profile_id),
-            ),
+          const agent = agents.data?.find((agent) => agent.id === node.agentId);
+          const bound = agent?.runtime_id;
+          const machine = machines.find((machine) =>
+            machine.runtimes.some((runtime) => runtime.id === bound),
           );
-          const machines = buildRuntimeMachines(eligible, { now: Date.now() });
+          const runtime = machine?.runtimes.find(
+            (runtime) => runtime.id === bound,
+          );
+          const reason =
+            !agents.isPending && (!agent || agent.archived_at)
+              ? t(($) => $.start.agent_unavailable)
+              : bound
+                ? runtimeReason(runtime, node.type === "script")
+                : "";
           return (
             <Field
               key={path}
@@ -358,36 +392,67 @@ export function GraphStartForm({
             >
               {(id) => (
                 <div className="space-y-2">
-                  <NativeSelect
-                    id={id}
-                    className="w-full"
-                    required
-                    value={runtimeFor(
-                      path,
-                      node.agentId,
-                      node.type === "script",
-                    )}
-                    onChange={(event) =>
-                      setBindings((current) => ({
-                        ...current,
-                        [path]: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">{t(($) => $.start.choose_runtime)}</option>
-                    {machines.map((machine) => (
-                      <optgroup key={machine.id} label={machine.title}>
-                        {machine.runtimes.map((runtime) => (
-                          <option key={runtime.id} value={runtime.id}>
-                            {runtimeRowLabel(runtime, machine.title)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </NativeSelect>
-                  {!eligible.length && (
-                    <p className="text-caption text-destructive">
-                      {t(($) => $.production.runtime_unavailable)}
+                  {bound ? (
+                    <>
+                      <output
+                        id={id}
+                        className="block rounded-lg border bg-muted/20 px-3 py-2 text-body"
+                      >
+                        {machine && runtime
+                          ? `${machine.title} · ${runtimeRowLabel(runtime, machine.title)}`
+                          : t(($) => $.start.runtime_missing)}
+                      </output>
+                      <p className="text-caption text-muted-foreground">
+                        {t(($) => $.start.runtime_bound)}
+                      </p>
+                    </>
+                  ) : (
+                    <NativeSelect
+                      id={id}
+                      className="w-full"
+                      required
+                      value={runtimeFor(
+                        path,
+                        node.agentId,
+                        node.type === "script",
+                      )}
+                      onChange={(event) =>
+                        setBindings((current) => ({
+                          ...current,
+                          [path]: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">
+                        {t(($) => $.start.choose_runtime)}
+                      </option>
+                      {machines.map((machine) => (
+                        <optgroup key={machine.id} label={machine.title}>
+                          {machine.runtimes.map((runtime) => (
+                            <option
+                              key={runtime.id}
+                              value={runtime.id}
+                              disabled={Boolean(
+                                runtimeReason(runtime, node.type === "script"),
+                              )}
+                            >
+                              {runtimeRowLabel(runtime, machine.title)}
+                              {runtimeReason(runtime, node.type === "script")
+                                ? ` · ${runtimeReason(runtime, node.type === "script")}`
+                                : ""}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </NativeSelect>
+                  )}
+                  {reason && (
+                    <p role="alert" className="text-caption text-destructive">
+                      {t(($) => $.start.runtime_node_error, {
+                        node: node.label || path,
+                        agent: agent?.name || node.agentId,
+                        reason,
+                      })}
                     </p>
                   )}
                 </div>
@@ -395,6 +460,31 @@ export function GraphStartForm({
             </Field>
           );
         })}
+        {steps.length > 0 && (
+          <details className="rounded-lg border p-3 text-caption">
+            <summary className="cursor-pointer">
+              {t(($) => $.start.runtime_inventory, { count: machines.length })}
+            </summary>
+            <ul className="mt-3 space-y-3">
+              {machines.map((machine) => (
+                <li key={machine.id}>
+                  <p className="font-medium">{machine.title}</p>
+                  <ul className="mt-1 space-y-1 text-muted-foreground">
+                    {machine.runtimes.map((runtime) => (
+                      <li key={runtime.id}>
+                        {runtimeRowLabel(runtime, machine.title)} ·{" "}
+                        {runtimeReason(
+                          runtime,
+                          steps.some(({ node }) => node.type === "script"),
+                        ) || t(($) => $.start.runtime_ready)}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         {needsRepository && (
           <section className="space-y-4 rounded-xl border p-4">
             <Field label={t(($) => $.start.repository)}>
@@ -522,7 +612,13 @@ export function GraphStartForm({
         <Button
           type="submit"
           disabled={
-            (!rootIssueId && !onConfigure) || start.isPending || externalPending
+            (!rootIssueId && !onConfigure) ||
+            start.isPending ||
+            externalPending ||
+            steps.some(
+              ({ node, path }) =>
+                !runtimeFor(path, node.agentId, node.type === "script"),
+            )
           }
         >
           <Play className="size-4" />

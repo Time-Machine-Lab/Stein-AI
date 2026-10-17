@@ -6,6 +6,7 @@ import { Badge } from "@multica/ui/components/ui/badge";
 import { Label } from "@multica/ui/components/ui/label";
 import { useCurrentMember } from "@multica/core/permissions";
 import type { GraphActor } from "@multica/core/graphs";
+import { graphFailureContext } from "@multica/core/graphs";
 
 export function Field({
   label,
@@ -82,13 +83,35 @@ export function GraphState({ state }: { state: string }) {
 }
 
 export function GraphError({ error }: { error: unknown }) {
+  const { t } = useT("graphs");
   if (!error) return null;
+  const context = graphFailureContext(error);
+  const reasons: Record<string, string> = {
+    runtime_mismatch: t(($) => $.start.runtime_binding_changed),
+    runtime_snapshot_changed: t(($) => $.start.runtime_republish),
+    agent_unavailable: t(($) => $.start.agent_unavailable),
+    runtime_missing: t(($) => $.start.runtime_missing),
+    runtime_offline: t(($) => $.start.runtime_offline),
+    capability_missing: t(($) => $.start.runtime_upgrade),
+  };
+  const reason = context && reasons[context.code];
+  const message = reason
+    ? context.node_path && context.agent_name
+      ? t(($) => $.start.runtime_node_error, {
+          node: context.node_label || context.node_path,
+          agent: context.agent_name,
+          reason,
+        })
+      : reason
+    : error instanceof Error
+      ? error.message
+      : String(error);
   return (
     <p
       role="alert"
       className="break-words rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-body text-destructive"
     >
-      {error instanceof Error ? error.message : String(error)}
+      {message}
     </p>
   );
 }

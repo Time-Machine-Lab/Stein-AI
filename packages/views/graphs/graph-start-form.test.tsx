@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { GraphDefinition, GraphRecord } from "@multica/core/graphs";
+import { ApiError } from "@multica/core/api";
 import labels from "../locales/en/graphs.json";
 import { GraphStartForm } from "./graph-start-form";
 
@@ -9,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn(),
   push: vi.fn(),
   commits: vi.fn(),
+  agentRuntimeId: "claude",
+  agentArchived: false,
 }));
 vi.mock("../i18n", () => ({
   useT: () => ({
@@ -68,7 +71,14 @@ vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({
     queryKey: ["agents"],
     queryFn: async () => [],
-    initialData: [{ id: "agent", name: "DeepSeek", runtime_id: "claude" }],
+    initialData: [
+      {
+        id: "agent",
+        name: "DeepSeek",
+        runtime_id: mocks.agentRuntimeId,
+        archived_at: mocks.agentArchived ? "2026-10-17T00:00:00Z" : null,
+      },
+    ],
   }),
 }));
 vi.mock("@multica/core/runtimes", async (original) => ({
@@ -84,6 +94,8 @@ vi.mock("@multica/core/runtimes", async (original) => ({
         status: "online",
         runtime_mode: "local",
         metadata: { capabilities: ["graph-execution-v2"] },
+        daemon_id: "machine-1",
+        device_info: "WIN-QGQL8EFDVAN · windows-amd64",
       },
       {
         id: "offline",
@@ -100,6 +112,8 @@ vi.mock("@multica/core/runtimes", async (original) => ({
         status: "online",
         runtime_mode: "local",
         metadata: { capabilities: ["graph-execution-v1"] },
+        daemon_id: "machine-2",
+        device_info: "DESKTOP-RN3FB79 · windows-amd64",
       },
     ],
   }),
@@ -192,6 +206,7 @@ const definition: GraphDefinition = {
 function renderForm(
   d = definition,
   onConfigure?: (request: unknown) => Promise<void>,
+  runtimeBindings?: Record<string, string>,
 ) {
   const graph = {
     id: "graph",
@@ -217,12 +232,19 @@ function renderForm(
         })
       }
     >
-      <GraphStartForm wsId="ws" graph={graph} onConfigure={onConfigure} />
+      <GraphStartForm
+        wsId="ws"
+        graph={graph}
+        onConfigure={onConfigure}
+        configuration={runtimeBindings ? { runtimeBindings } : undefined}
+      />
     </QueryClientProvider>,
   );
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.agentRuntimeId = "claude";
+  mocks.agentArchived = false;
   mocks.start.mockResolvedValue({ id: "run" });
   mocks.commits.mockResolvedValue({ commits: [] });
 });
@@ -233,9 +255,7 @@ describe("Graph start execution settings", () => {
     fireEvent.change(screen.getByLabelText("Requirements *"), {
       target: { value: "Verify without modifying main" },
     });
-    expect(
-      screen.getByRole("option", { name: "Local Claude Code" }),
-    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Local Claude Code/)[0]).toBeInTheDocument();
     expect(
       screen.queryByRole("option", { name: "Offline Claude" }),
     ).not.toBeInTheDocument();
@@ -253,6 +273,118 @@ describe("Graph start execution settings", () => {
       ),
     );
     expect(mocks.start).not.toHaveBeenCalled();
+  });
+  it("uses the agent binding instead of offering a conflicting runtime override", async () => {
+    const configure = vi.fn().mockResolvedValue(undefined);
+    renderForm(definition, configure, { "loop/body/check": "legacy" });
+    expect(
+      screen.queryByRole("combobox", { name: /Runtime for/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/WIN-QGQL8EFDVAN · Local Claude Code/),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Requirements *"), {
+      target: { value: "Check" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: labels.start.submit }));
+    await waitFor(() =>
+      expect(configure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimeBindings: { "loop/body/check": "claude" },
+        }),
+      ),
+    );
+  });
+  it("keeps both computers visible and explains why an online runtime cannot execute Graph", () => {
+    mocks.agentRuntimeId = "";
+    renderForm();
+    const legacy = screen.getByRole("option", {
+      name: /Legacy Claude.*Update Multica/,
+    });
+    expect(legacy).toBeDisabled();
+    expect(
+      screen
+        .getAllByRole("group")
+        .some((group) => group.getAttribute("label") === "DESKTOP-RN3FB79"),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByRole("group")
+        .some((group) => group.getAttribute("label") === "WIN-QGQL8EFDVAN"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("option", { name: /Offline Claude.*Offline/ }),
+    ).toBeDisabled();
+  });
+  it("names the affected node and agent when its bound runtime needs an update", () => {
+    mocks.agentRuntimeId = "legacy";
+    renderForm();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /loop\/body\/check.*DeepSeek.*Update Multica/,
+    );
+    expect(
+      screen.getByRole("button", { name: labels.start.submit }),
+    ).toBeDisabled();
+  });
+  it("localizes a server-side binding change with its node and agent", async () => {
+    const configure = vi.fn().mockRejectedValue(
+      new ApiError("runtime differs from the agent binding", 409, "Conflict", {
+        code: "runtime_mismatch",
+        node_path: "loop/body/check",
+        node_label: "Review design",
+        agent_name: "UI reviewer",
+      }),
+    );
+    renderForm(definition, configure);
+    fireEvent.change(screen.getByLabelText("Requirements *"), {
+      target: { value: "Check" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: labels.start.submit }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Review design.*UI reviewer.*Refresh/,
+    );
+  });
+  it.each([
+    ["offline", /Offline/],
+    ["deleted-runtime", /Runtime unavailable/],
+  ])("blocks a bound runtime that is unavailable: %s", (runtimeId, reason) => {
+    mocks.agentRuntimeId = runtimeId;
+    renderForm();
+    expect(screen.getByRole("alert")).toHaveTextContent(reason);
+    expect(
+      screen.queryByRole("combobox", { name: /Runtime for/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: labels.start.submit }),
+    ).toBeDisabled();
+  });
+  it("blocks an archived agent before submitting", () => {
+    mocks.agentArchived = true;
+    renderForm();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /DeepSeek.*Agent unavailable/,
+    );
+    expect(
+      screen.getByRole("button", { name: labels.start.submit }),
+    ).toBeDisabled();
+  });
+  it("explains that a runtime change requires a new published version", async () => {
+    const configure = vi.fn().mockRejectedValue(
+      new ApiError("runtime changed", 409, "Conflict", {
+        code: "runtime_snapshot_changed",
+        node_path: "loop/body/check",
+        node_label: "Review design",
+        agent_name: "UI reviewer",
+      }),
+    );
+    renderForm(definition, configure);
+    fireEvent.change(screen.getByLabelText("Requirements *"), {
+      target: { value: "Check" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: labels.start.submit }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Review design.*UI reviewer.*Publish a new version/,
+    );
   });
   it("rejects invalid input before starting or navigating", async () => {
     renderForm();

@@ -54,7 +54,11 @@ func writeGraphError(w http.ResponseWriter, err error) {
 		case "disabled", "feature_disabled", "unavailable":
 			status = http.StatusServiceUnavailable
 		}
-		writeErrorCode(w, status, code, message)
+		if ge != nil && ge.NodePath != "" {
+			writeJSON(w, status, map[string]any{"code": code, "error": message, "node_path": ge.NodePath, "node_label": ge.NodeLabel, "agent_name": ge.AgentName})
+		} else {
+			writeErrorCode(w, status, code, message)
+		}
 		return
 	}
 	slog.Error("Graph operation failed", "error", err)

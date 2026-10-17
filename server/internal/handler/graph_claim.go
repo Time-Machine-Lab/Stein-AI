@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -82,7 +81,7 @@ func (h *Handler) buildGraphClaim(r *http.Request, task db.AgentTaskQueue, runti
 		if loadErr != nil {
 			return resp, loadErr
 		}
-		if frozen.Runtime.RuntimeID != live.RuntimeID || frozen.Runtime.Provider != live.Provider || frozen.Runtime.ProfileID != live.ProfileID || frozen.Runtime.CommandName != live.CommandName || !slices.Equal(frozen.Runtime.FixedArgs, live.FixedArgs) {
+		if !sameGraphRuntime(frozen.Runtime, live) {
 			return resp, graphConfigurationError("runtime profile changed; publish a new Graph version")
 		}
 	}

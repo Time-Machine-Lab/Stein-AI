@@ -1,6 +1,7 @@
 export * from "./types";
 export * from "./definition";
 export * from "./controls";
+export * from "./errors";
 export * from "./queries";
 export * from "./mutations";
 export * from "./draft-store";

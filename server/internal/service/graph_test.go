@@ -1,13 +1,36 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/graph"
 )
+
+func TestGraphVersionRuntimeFailureKeepsNodeContextBeforeDispatch(t *testing.T) {
+	s := &GraphService{
+		AuthorizeRun: func(context.Context, pgx.Tx, string, string, graph.Definition, map[string]string) error { return nil },
+		AuthorizeSnapshot: func(context.Context, pgx.Tx, string, graph.Node, GraphNodeSnapshot) error {
+			return &GraphError{Code: "runtime_snapshot_changed", Message: "publish a new version", AgentName: "Reviewer"}
+		},
+	}
+	version := GraphVersionRecord{Definition: graph.Definition{SchemaVersion: 1, Name: "Review", InputSchema: json.RawMessage(`{"type":"object"}`), Nodes: []graph.Node{
+		{Key: "start", Type: graph.NodeTypeStart},
+		{Key: "review", Label: "Review design", Type: graph.NodeTypeAgent, AgentID: "reviewer", Instructions: "Review", OutputSchema: json.RawMessage(`{"type":"object"}`), ExecutionMode: graph.ExecutionNone, MaxAttempts: 1, TimeoutSeconds: 60},
+		{Key: "approve", Type: graph.NodeTypeApproval, ApproverID: "member"},
+		{Key: "end", Type: graph.NodeTypeEnd},
+	}, Edges: []graph.Edge{{From: "start", To: "review"}, {From: "review", To: "approve"}, {From: "approve", To: "end"}}}}
+	err := s.authorizeVersion(context.Background(), nil, "workspace", "user", version, nil)
+	var failure *GraphError
+	if !errors.As(err, &failure) || failure.NodePath != "review" || failure.NodeLabel != "Review design" || failure.AgentName != "Reviewer" {
+		t.Fatalf("runtime validation lost node context: %+v", err)
+	}
+}
 
 func TestGraphRetryRequiresPhysicalTermination(t *testing.T) {
 	node := GraphNodeRunRecord{State: "blocked", MaxAttempts: 3, Attempts: []GraphAttemptRecord{{State: "failed"}}}

@@ -1,11 +1,25 @@
 package handler
 
 import (
+	"encoding/json"
+	"github.com/multica-ai/multica/server/internal/service"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestGraphRuntimeErrorIdentifiesAffectedNodeAndAgent(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeGraphError(w, &service.GraphError{Code: "runtime_mismatch", Message: "binding changed", NodePath: "review/body/check", NodeLabel: "Review design", AgentName: "UI reviewer"})
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusConflict || body["node_path"] != "review/body/check" || body["node_label"] != "Review design" || body["agent_name"] != "UI reviewer" {
+		t.Fatalf("Graph error lost the affected node and agent: %s", w.Body.String())
+	}
+}
 
 func TestGraphHumanEndpointsRejectMachineCredentials(t *testing.T) {
 	h := &Handler{}

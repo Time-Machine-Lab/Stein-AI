@@ -4,9 +4,38 @@ import (
 	"encoding/json"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"strings"
 	"testing"
 )
+
+func TestGraphPublishedRuntimeComparisonIncludesIdentityAndLaunchSettings(t *testing.T) {
+	frozen := &protocol.GraphRuntimeSnapshot{RuntimeID: "runtime-a", Provider: "codex", ProfileID: "profile", CommandName: "codex", FixedArgs: []string{"app-server"}}
+	for _, change := range []struct {
+		name   string
+		mutate func(*protocol.GraphRuntimeSnapshot)
+	}{
+		{"computer", func(v *protocol.GraphRuntimeSnapshot) { v.RuntimeID = "runtime-b" }},
+		{"provider", func(v *protocol.GraphRuntimeSnapshot) { v.Provider = "claude" }},
+		{"profile", func(v *protocol.GraphRuntimeSnapshot) { v.ProfileID = "other" }},
+		{"command", func(v *protocol.GraphRuntimeSnapshot) { v.CommandName = "wrapper" }},
+		{"arguments", func(v *protocol.GraphRuntimeSnapshot) { v.FixedArgs = []string{"different"} }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			live := *frozen
+			if !sameGraphRuntime(frozen, &live) {
+				t.Fatal("unchanged runtime rejected")
+			}
+			change.mutate(&live)
+			if sameGraphRuntime(frozen, &live) {
+				t.Fatal("changed published runtime accepted")
+			}
+		})
+	}
+	if sameGraphRuntime(frozen, nil) || sameGraphRuntime(nil, frozen) {
+		t.Fatal("missing runtime accepted")
+	}
+}
 
 func TestGraphRuntimeCapabilityNegotiationDoesNotAssumeEveryDaemonSupportsNewAdapters(t *testing.T) {
 	for _, tc := range []struct {

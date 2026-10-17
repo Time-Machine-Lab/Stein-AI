@@ -53,19 +53,29 @@ func (s *GraphService) authorizeVersion(ctx context.Context, tx pgx.Tx, ws, user
 			if node.Type != graph.NodeTypeAgent && node.Type != graph.NodeTypeScript {
 				return nil
 			}
-			return s.AuthorizeSnapshot(ctx, tx, ws, node, version.Snapshots[path])
+			err := s.AuthorizeSnapshot(ctx, tx, ws, node, version.Snapshots[path])
+			var failure *GraphError
+			if errors.As(err, &failure) {
+				contextual := *failure
+				contextual.NodePath, contextual.NodeLabel = path, node.Label
+				return &contextual
+			}
+			return err
 		})
 	}
 	return nil
 }
 
 type GraphError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	NodePath  string `json:"node_path,omitempty"`
+	NodeLabel string `json:"node_label,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
 }
 
 func (e *GraphError) Error() string         { return e.Code + ": " + e.Message }
-func graphError(code, message string) error { return &GraphError{code, message} }
+func graphError(code, message string) error { return &GraphError{Code: code, Message: message} }
 
 type GraphNodeSnapshot struct {
 	AgentConfig json.RawMessage       `json:"agent_config"`
@@ -172,6 +182,7 @@ type GraphNodeRunRecord struct {
 // attemptBudget is the highest attempt number this node may reach: the published
 // max_attempts plus the ones people granted by clearing a block.
 func (n GraphNodeRunRecord) attemptBudget() int { return n.MaxAttempts + n.GrantedAttempts }
+
 type GraphAttemptRecord struct {
 	TaskID       string                `json:"task_id"`
 	AttemptNo    int                   `json:"attempt_no"`
@@ -558,6 +569,7 @@ func graphFinish(run *GraphRunRecord, state, reason string) {
 	}
 	graphEvent(run, "run."+state, "", reason)
 }
+
 // graphRetryAllowed reports whether a blocked node may take another attempt on
 // its published budget. This is the gate for the agent's own repeats, so it is
 // where max_attempts applies.

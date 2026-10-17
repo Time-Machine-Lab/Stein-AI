@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -379,7 +381,32 @@ func (h *Handler) authorizeGraphSnapshot(ctx context.Context, tx pgx.Tx, ws stri
 	if err := json.Unmarshal(snapshot.AgentConfig, &frozen); err != nil {
 		return err
 	}
+	if frozen.Runtime != nil {
+		q := h.Queries.WithTx(tx)
+		current, err := q.GetAgent(ctx, parseUUID(node.AgentID))
+		if err != nil {
+			return err
+		}
+		if !current.RuntimeID.Valid {
+			return &service.GraphError{Code: "runtime_snapshot_changed", Message: "agent runtime changed since publication; publish a new Graph version", AgentName: current.Name}
+		}
+		live, err := loadGraphRuntimeSnapshot(ctx, q, current.RuntimeID)
+		if err != nil {
+			var configurationError *service.GraphError
+			if errors.Is(err, pgx.ErrNoRows) || errors.As(err, &configurationError) && configurationError.Code == "snapshot_invalid" {
+				return &service.GraphError{Code: "runtime_snapshot_changed", Message: "published runtime profile is no longer available; check the agent settings and publish a new Graph version", AgentName: current.Name}
+			}
+			return err
+		}
+		if !sameGraphRuntime(frozen.Runtime, live) {
+			return &service.GraphError{Code: "runtime_snapshot_changed", Message: "agent runtime or launch profile changed since publication; publish a new Graph version", AgentName: current.Name}
+		}
+	}
 	return h.PluginService.ValidateGraphPluginPins(ctx, tx, parseUUID(ws), parseUUID(node.AgentID), frozen.Plugins)
+}
+
+func sameGraphRuntime(frozen, live *protocol.GraphRuntimeSnapshot) bool {
+	return frozen != nil && live != nil && frozen.RuntimeID == live.RuntimeID && frozen.Provider == live.Provider && frozen.ProfileID == live.ProfileID && frozen.CommandName == live.CommandName && slices.Equal(frozen.FixedArgs, live.FixedArgs)
 }
 
 func (h *Handler) authorizeGraphRun(ctx context.Context, tx pgx.Tx, ws, user string, definition graph.Definition, bindings map[string]string) error {
@@ -395,35 +422,44 @@ func (h *Handler) authorizeGraphRun(ctx context.Context, tx pgx.Tx, ws, user str
 		if err != nil {
 			return err
 		}
-		runtimeID, err := parseGraphUUID(bindings[path])
-		if err != nil {
-			return err
-		}
 		agent, err := q.GetAgent(ctx, agentID)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return &service.GraphError{Code: "agent_unavailable", Message: fmt.Sprintf("Node %q (%s): agent no longer exists; choose an available agent and publish a new version", node.Label, path), NodePath: path, NodeLabel: node.Label, AgentName: node.AgentID}
+			}
 			return err
 		}
+		nodeError := func(code, message string) error {
+			return &service.GraphError{Code: code, Message: fmt.Sprintf("Node %q (%s), agent %q: %s", node.Label, path, agent.Name, message), NodePath: path, NodeLabel: node.Label, AgentName: agent.Name}
+		}
 		if uuidToString(agent.WorkspaceID) != ws || agent.ArchivedAt.Valid {
-			return &service.GraphError{Code: "authorization_revoked", Message: "agent is unavailable"}
+			return nodeError("authorization_revoked", "agent is unavailable; choose an available agent for this node")
 		}
 		if !h.canInvokeAgent(ctx, agent, "member", user, user, ws) {
-			return &service.GraphError{Code: "authorization_revoked", Message: "initiator can no longer invoke an agent"}
+			return nodeError("authorization_revoked", "you can no longer invoke this agent")
+		}
+		runtimeID, err := parseGraphUUID(bindings[path])
+		if err != nil {
+			return nodeError("runtime_missing", "runtime selection is missing or invalid; refresh the form and check the agent's runtime binding")
 		}
 		runtime, err := q.GetAgentRuntime(ctx, runtimeID)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nodeError("runtime_missing", "runtime no longer exists; check the agent's runtime binding")
+			}
 			return err
 		}
-		if node.Type == graph.NodeTypeAgent && !graphRuntimeCompatible(runtime) || node.Type == graph.NodeTypeScript && !runtimeHasCapability(runtime.Metadata, protocol.DaemonCapabilityGraphExecutionV2) {
-			return &service.GraphError{Code: "capability_missing", Message: "runtime does not provide the required Graph execution capabilities; upgrade its daemon"}
-		}
 		if uuidToString(runtime.WorkspaceID) != ws || runtime.Status != "online" {
-			return &service.GraphError{Code: "capability_missing", Message: "every node requires an online runtime in the same workspace"}
+			return nodeError("runtime_offline", "runtime is offline or unavailable in this workspace; start Multica on the bound computer")
 		}
 		if runtime.Visibility == "private" && uuidToString(runtime.OwnerID) != user {
-			return &service.GraphError{Code: "forbidden", Message: "runtime is private to another member"}
+			return nodeError("forbidden", "runtime is private to another member")
 		}
 		if agent.RuntimeID.Valid && agent.RuntimeID != runtime.ID {
-			return &service.GraphError{Code: "runtime_mismatch", Message: "runtime differs from the agent binding"}
+			return nodeError("runtime_mismatch", fmt.Sprintf("selected runtime %s differs from the agent's bound runtime %s; refresh this form to use the current binding, or change the binding in the agent settings", bindings[path], uuidToString(agent.RuntimeID)))
+		}
+		if node.Type == graph.NodeTypeAgent && !graphRuntimeCompatible(runtime) || node.Type == graph.NodeTypeScript && !runtimeHasCapability(runtime.Metadata, protocol.DaemonCapabilityGraphExecutionV2) {
+			return nodeError("capability_missing", "runtime does not support this Graph node; update Multica on its computer")
 		}
 		return nil
 	})
