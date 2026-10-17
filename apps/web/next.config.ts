@@ -39,6 +39,9 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
   : undefined;
 
 const nextConfig: NextConfig = {
+  // API uploads are accepted up to 100 MiB by the Go backend. Next's default
+  // 10 MiB proxy buffer truncates larger multipart bodies before forwarding.
+  experimental: { proxyClientMaxBodySize: 100 * 1024 * 1024 },
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
