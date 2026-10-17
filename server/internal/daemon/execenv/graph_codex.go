@@ -2,58 +2,43 @@ package execenv
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/pelletier/go-toml/v2"
 )
 
-// prepareGraphCodexHome admits transport/auth as live runtime dependencies, while
-// excluding instructions, model defaults, MCP, plugins, skills, memory and history.
-func prepareGraphCodexHome(home string, opts CodexHomeOptions, logger *slog.Logger) error {
-	if entries, err := os.ReadDir(home); err == nil && len(entries) != 0 {
-		return fmt.Errorf("Graph requires a fresh Codex home")
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Join(home, "sessions"), 0700); err != nil {
-		return err
-	}
-	shared := resolveSharedCodexHome()
-	if _, err := os.Stat(filepath.Join(shared, "auth.json")); err == nil {
-		if err := ensureSymlink(filepath.Join(shared, "auth.json"), filepath.Join(home, "auth.json")); err != nil {
-			return fmt.Errorf("bind Graph Codex auth: %w", err)
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
+// isolateGraphCodexConfig removes ambient context from the config copied by the
+// ordinary Codex runtime preparation. Provider tables retain native transport/auth
+// fields without a Graph-specific field allowlist, including future CLI additions.
+func isolateGraphCodexConfig(path string) error {
 	config := map[string]any{
 		"web_search":            "disabled",
 		"project_doc_max_bytes": 0,
 		"features":              map[string]any{"multi_agent": false, "memories": false, "apps": false, "plugins": false},
 		"memories":              map[string]any{"generate_memories": false, "use_memories": false},
 	}
-	raw, err := os.ReadFile(filepath.Join(shared, "config.toml"))
+	raw, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if len(raw) > 0 {
 		var source map[string]any
 		if err := toml.Unmarshal(raw, &source); err != nil {
-			return fmt.Errorf("read Codex provider transport: %w", err)
+			// Parser errors can include the source line containing a credential.
+			return fmt.Errorf("invalid Codex runtime TOML configuration")
+		}
+		for _, key := range []string{"cli_auth_credentials_store", "forced_login_method", "forced_chatgpt_workspace_id", "openai_base_url"} {
+			if value, exists := source[key]; exists {
+				config[key] = value
+			}
 		}
 		if selected, ok := source["model_provider"].(string); ok && selected != "" {
 			config["model_provider"] = selected
 			if providers, ok := source["model_providers"].(map[string]any); ok {
 				if provider, ok := providers[selected].(map[string]any); ok {
-					transport := map[string]any{}
-					for _, key := range []string{"name", "base_url", "env_key", "env_key_instructions", "wire_api", "http_headers", "env_http_headers", "requires_openai_auth", "request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"} {
-						if value, exists := provider[key]; exists {
-							transport[key] = value
-						}
-					}
-					config["model_providers"] = map[string]any{selected: transport}
+					delete(provider, "instructions")
+					config["model_providers"] = map[string]any{selected: provider}
 				}
 			}
 		}
@@ -68,15 +53,10 @@ func prepareGraphCodexHome(home string, opts CodexHomeOptions, logger *slog.Logg
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(home, "config.toml")
-	if err := os.WriteFile(path, encoded, 0600); err != nil {
+	if err := os.Chmod(path, 0600); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	winState := windowsSandboxAbsent
-	if resolveGOOS(opts.GOOS) == "windows" {
-		winState = resolveWindowsSandboxState(path, nil, statSharedCodexConfig(shared), nil, logger)
-	}
-	return ensureCodexSandboxConfig(path, codexSandboxPolicyForConfig(opts.GOOS, opts.CodexVersion, winState), opts.CodexVersion, logger)
+	return os.WriteFile(path, encoded, 0600)
 }
 
 func hydrateGraphCodexSkills(home string, skills []SkillContextForEnv) error {

@@ -199,7 +199,11 @@ func classifyPerTaskWindowsSandbox(configFile string, configSyncErr error, share
 // daemon-managed sandbox block picked by codexSandboxPolicyFor.
 func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
 	if opts.GraphIsolated {
-		return prepareGraphCodexHome(codexHome, opts, logger)
+		if entries, err := os.ReadDir(codexHome); err == nil && len(entries) != 0 {
+			return fmt.Errorf("Graph requires a fresh Codex home")
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	sharedHome := resolveSharedCodexHome()
 	freshHome := false
@@ -207,14 +211,30 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		freshHome = true
 	}
 
-	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+	homeMode := os.FileMode(0o755)
+	if opts.GraphIsolated {
+		homeMode = 0o700
+	}
+	if err := os.MkdirAll(codexHome, homeMode); err != nil {
 		return fmt.Errorf("create codex-home dir: %w", err)
+	}
+	if opts.GraphIsolated {
+		if err := os.Chmod(codexHome, homeMode); err != nil {
+			return err
+		}
 	}
 
 	// Give the task its own local sessions/ directory instead of symlinking the
 	// shared ~/.codex/sessions in — a huge shared history would otherwise stall
 	// Codex's `initialize` state backfill (MUL-4424). See prepareCodexSessionsDir.
-	if err := prepareCodexSessionsDir(codexHome, sharedHome, opts, logger); err != nil {
+	sessionOpts := opts
+	if opts.GraphIsolated {
+		sessionOpts = CodexHomeOptions{}
+	}
+	if err := prepareCodexSessionsDir(codexHome, sharedHome, sessionOpts, logger); err != nil {
+		if opts.GraphIsolated {
+			return err
+		}
 		logger.Warn("execenv: codex-home sessions dir prepare failed", "error", err)
 	}
 
@@ -223,6 +243,9 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		src := filepath.Join(sharedHome, name)
 		dst := filepath.Join(codexHome, name)
 		if err := ensureSymlink(src, dst); err != nil {
+			if opts.GraphIsolated {
+				return fmt.Errorf("bind Codex auth: %w", err)
+			}
 			logger.Warn("execenv: codex-home symlink failed", "file", name, "error", err)
 		}
 	}
@@ -239,13 +262,24 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 	// stale or absent copy as "unconfigured" and loosen (MUL-4957).
 	var configSyncErr error
 	for _, name := range codexCopiedFiles {
+		if opts.GraphIsolated && name != "config.toml" {
+			continue
+		}
 		src := filepath.Join(sharedHome, name)
 		dst := filepath.Join(codexHome, name)
 		if err := syncCopiedFile(src, dst); err != nil {
+			if opts.GraphIsolated {
+				return fmt.Errorf("sync Codex runtime config: %w", err)
+			}
 			logger.Warn("execenv: codex-home sync failed", "file", name, "error", err)
 			if name == "config.toml" {
 				configSyncErr = err
 			}
+		}
+	}
+	if opts.GraphIsolated {
+		if err := isolateGraphCodexConfig(filepath.Join(codexHome, "config.toml")); err != nil {
+			return err
 		}
 	}
 	// Drop `[[skills.config]]` entries inherited from the user's
@@ -267,15 +301,17 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 	// provider/catalog configuration is still the one that cache was bound to.
 	// If binding fails, discard the optional cache so Codex refreshes it instead
 	// of potentially using models from the wrong provider.
-	if err := syncCodexModelsCache(codexHome, sharedHome, freshHome); err != nil {
-		logger.Warn("execenv: codex-home models cache sync failed; discarding cache", "error", err)
-		if removeErr := os.RemoveAll(filepath.Join(codexHome, codexModelsCacheFile)); removeErr != nil {
-			return fmt.Errorf("sync codex models cache: %v; discard unsafe cache: %w", err, removeErr)
+	if !opts.GraphIsolated {
+		if err := syncCodexModelsCache(codexHome, sharedHome, freshHome); err != nil {
+			logger.Warn("execenv: codex-home models cache sync failed; discarding cache", "error", err)
+			if removeErr := os.RemoveAll(filepath.Join(codexHome, codexModelsCacheFile)); removeErr != nil {
+				return fmt.Errorf("sync codex models cache: %v; discard unsafe cache: %w", err, removeErr)
+			}
 		}
-	}
 
-	if err := exposeSharedCodexPluginCache(codexHome, sharedHome); err != nil {
-		logger.Warn("execenv: codex-home plugin cache exposure failed", "error", err)
+		if err := exposeSharedCodexPluginCache(codexHome, sharedHome); err != nil {
+			logger.Warn("execenv: codex-home plugin cache exposure failed", "error", err)
+		}
 	}
 
 	// Write a daemon-managed sandbox block into config.toml. On macOS we may
@@ -301,6 +337,9 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		// fails the task; on Reuse the caller leaves env.CodexHome unset, which
 		// configureCodexTaskShellEnvironment then refuses to start (MUL-4957).
 		return fmt.Errorf("ensure codex sandbox config: %w", err)
+	}
+	if opts.GraphIsolated {
+		return nil // Isolation above already disables native multi-agent and memory escape hatches.
 	}
 
 	// Disable Codex native multi-agent inside daemon-managed task sessions
