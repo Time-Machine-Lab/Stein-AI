@@ -3,6 +3,7 @@ package graph
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +73,35 @@ func TestResultValidatesPassContractButAcceptsNonPassDiagnostics(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestProduceFilesRequiresCurrentTaskBundle(t *testing.T) {
+	n := testDefinition().Nodes[1]
+	n.ExecutionMode = ExecutionMode("produce_files")
+	r := Result{Identity: testIdentity(), Outcome: OutcomePass, Output: json.RawMessage(`{"summary":"implemented"}`)}
+	r.Artifacts = []Artifact{{ID: "1c917f25-a32e-438f-8441-1ed5b59e7310", Type: ArtifactAttachmentRef, ProducerTaskID: r.Identity.TaskID, ContentHash: strings.Repeat("a", 64), Size: 200, MediaType: "application/zip", BundleFormat: "multica-graph-files-v1"}}
+	if err := ValidateResult(n, r); err != nil {
+		t.Fatalf("valid file delivery rejected: %v", err)
+	}
+	r.Artifacts = nil
+	if err := ValidateResult(n, r); err == nil {
+		t.Fatal("text-only completion accepted for a file producer")
+	}
+	r.Artifacts = []Artifact{{ID: "1c917f25-a32e-438f-8441-1ed5b59e7310", Type: ArtifactAttachmentRef, ProducerTaskID: "another-task", ContentHash: strings.Repeat("a", 64), Size: 200, MediaType: "application/zip", BundleFormat: "multica-graph-files-v1"}}
+	if err := ValidateResult(n, r); err == nil {
+		t.Fatal("upstream bundle replaced the current producer's delivery")
+	}
+	r.Outcome = OutcomeEnvironmentBlocked
+	r.Diagnostics = json.RawMessage(`{"reason":"cannot build files"}`)
+	if err := ValidateResult(n, r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResultRejectsUnknownBundleFormatForTextNodes(t *testing.T){
+	n:=testDefinition().Nodes[1]
+	r:=Result{Identity:testIdentity(),Outcome:OutcomePass,Output:json.RawMessage(`{"summary":"output"}`),Artifacts:[]Artifact{{ID:"1c917f25-a32e-438f-8441-1ed5b59e7310",Type:ArtifactAttachmentRef,ProducerTaskID:testIdentity().TaskID,ContentHash:strings.Repeat("a",64),Size:256,MediaType:"application/zip",BundleFormat:"invented-format"}}}
+	if err:=ValidateResult(n,r);err==nil{t.Fatal("unrecognized bundle marker accepted")}
 }
 
 func TestStopReceiptRequiresExactExecutorAttempt(t *testing.T) {

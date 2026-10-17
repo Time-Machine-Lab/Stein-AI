@@ -81,7 +81,7 @@ func TestLegacyGraphPromptFrameUnchanged(t *testing.T) {
 // both authoring paths should change, then update the digest.
 func TestGraphDefinitionGrammarIsUnchanged(t *testing.T) {
 	t.Parallel()
-	const pinned = "cb47ae803549f8278c81cde5e308cd3d3f05645e1478db1a8200129743add2ee"
+	const pinned = "6962cc3fbdf849fd822f66458ce57336a67093c3f5ecd6473e3da730a65a8aea"
 	sum := sha256.Sum256([]byte(graphDefinitionGrammar))
 	got := hex.EncodeToString(sum[:])
 	if got == pinned {
@@ -113,6 +113,14 @@ func TestGrammarStatesTheChildMirrorRule(t *testing.T) {
 	for _, req := range required {
 		if !strings.Contains(graphDefinitionGrammar, req.needle) {
 			t.Errorf("grammar dropped %s: no %q", req.what, req.needle)
+		}
+	}
+}
+
+func TestGraphGrammarRequiresActualFileDelivery(t *testing.T) {
+	for _, required := range []string{`execution_mode:"produce_files"`, "multica graph node deliver", "result.artifacts", "multica graph node download-inputs", "start their own local preview", "A text description of files is not delivery"} {
+		if !strings.Contains(graphDefinitionGrammar, required) {
+			t.Fatalf("missing file-delivery authoring rule: %s", required)
 		}
 	}
 }

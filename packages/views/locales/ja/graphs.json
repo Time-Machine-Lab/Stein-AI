@@ -31,6 +31,7 @@
     "instructions_placeholder": "作業内容と提出が必要な証拠を記述します。",
     "mode": "コードの受け渡し",
     "none": "コード成果物なし",
+    "produce_files": "ファイルを受け渡す",
     "produce_commit": "コミットを作成",
     "verify_commit": "コミットを検証",
     "attempts": "最大試行回数",

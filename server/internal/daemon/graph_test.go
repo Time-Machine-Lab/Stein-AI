@@ -37,6 +37,35 @@ func graphTestTask(t *testing.T) Task {
 	return Task{ID: "task-1", AgentID: "agent-1", WorkspaceID: "workspace-1", IssueID: "issue-1", Graph: &manifest, GraphManifestHash: hash, Agent: &AgentData{ID: "agent-1", Name: "Builder", Instructions: "Frozen persona"}}
 }
 
+func TestGraphPromptExplainsHowToReadFrozenInputImages(t *testing.T) {
+	task := graphTestTask(t)
+	task.GraphRootSnapshot = json.RawMessage(`{"attachments":[{"id":"input-image","filename":"design.png","media_type":"image/png","size":693272}]}`)
+	prompt := buildGraphPrompt(task)
+	for _, required := range []string{"multica attachment download", "attachments", "inspect", "before declaring"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("Graph prompt lacks input image guidance %q", required)
+		}
+	}
+}
+
+func TestGraphFileDeliveryPromptAndFinalizer(t *testing.T) {
+	task := graphTestTask(t)
+	task.Graph.NodeSpec.Node.ExecutionMode = graph.ExecutionProduceFiles
+	prompt := buildGraphPrompt(task)
+	for _, required := range []string{"multica graph node download-inputs", "start your own preview", "multica graph node deliver", "top-level result.artifacts", "server rejects pass"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("missing delivery rule %q", required)
+		}
+	}
+	_, err := finalizeGraphGit(context.Background(), task, "", graph.Result{Outcome: graph.OutcomePass}, func(context.Context, string, ...string) (string, error) {
+		t.Fatal("file mode attempted Git finalization")
+		return "", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGraphScopedArtifactRefsDoNotCollideAcrossIterations(t *testing.T) {
 	first := graphTestTask(t)
 	if got := graphManagedRef(first); got != "refs/heads/multica/graphs/run-1/build/1" {

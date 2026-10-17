@@ -11,6 +11,36 @@ func graphRepositoryForNodeV2(run GraphRunRecord, root graph.Definition, target 
 		return nil, nil
 	}
 	r := *run.Repository
+	before, tasks := graphExecutionOrderV2(run, root)
+	var candidates []graph.Artifact
+	for _, artifact := range run.Artifacts {
+		producer, ok := tasks[artifact.ProducerTaskID]
+		if ok && producer.State == "succeeded" && artifact.Type == graph.ArtifactGitCommit && artifact.RepositoryID == r.RepositoryID && before(producer, target, 0) {
+			candidates = append(candidates, artifact)
+		}
+	}
+	if len(candidates) == 0 {
+		return &r, nil
+	}
+	for _, candidate := range candidates {
+		dominates := true
+		for _, other := range candidates {
+			if other.CommitSHA != candidate.CommitSHA && !before(tasks[other.ProducerTaskID], tasks[candidate.ProducerTaskID], 0) {
+				dominates = false
+				break
+			}
+		}
+		if dominates {
+			r.CommitSHA = candidate.CommitSHA
+			r.ArtifactID = candidate.ID
+			return &r, nil
+		}
+	}
+	return nil, graphError("ambiguous_repository_input", "parallel dependencies produced different commits; use one code-producing dependency path or start a new run from the selected commit")
+}
+
+// graphExecutionOrderV2 shares scoped ancestry for repository and file inputs.
+func graphExecutionOrderV2(run GraphRunRecord, root graph.Definition) (func(GraphNodeRunRecord, GraphNodeRunRecord, int) bool, map[string]GraphNodeRunRecord) {
 	nodes := map[string]GraphNodeRunRecord{}
 	tasks := map[string]GraphNodeRunRecord{}
 	scopes := map[string]GraphScopeRecord{}
@@ -53,29 +83,17 @@ func graphRepositoryForNodeV2(run GraphRunRecord, root graph.Definition, target 
 		parent, ok := nodes[sb.ParentNodeRunID]
 		return ok && before(a, parent, depth+1)
 	}
-	var candidates []graph.Artifact
+	return before, tasks
+}
+
+func graphInputArtifactsV2(run GraphRunRecord, root graph.Definition, target GraphNodeRunRecord) []graph.Artifact {
+	before, tasks := graphExecutionOrderV2(run, root)
+	var inputs []graph.Artifact
 	for _, artifact := range run.Artifacts {
 		producer, ok := tasks[artifact.ProducerTaskID]
-		if ok && producer.State == "succeeded" && artifact.Type == graph.ArtifactGitCommit && artifact.RepositoryID == r.RepositoryID && before(producer, target, 0) {
-			candidates = append(candidates, artifact)
+		if ok && producer.State == "succeeded" && before(producer, target, 0) {
+			inputs = append(inputs, artifact)
 		}
 	}
-	if len(candidates) == 0 {
-		return &r, nil
-	}
-	for _, candidate := range candidates {
-		dominates := true
-		for _, other := range candidates {
-			if other.CommitSHA != candidate.CommitSHA && !before(tasks[other.ProducerTaskID], tasks[candidate.ProducerTaskID], 0) {
-				dominates = false
-				break
-			}
-		}
-		if dominates {
-			r.CommitSHA = candidate.CommitSHA
-			r.ArtifactID = candidate.ID
-			return &r, nil
-		}
-	}
-	return nil, graphError("ambiguous_repository_input", "parallel dependencies produced different commits; use one code-producing dependency path or start a new run from the selected commit")
+	return inputs
 }

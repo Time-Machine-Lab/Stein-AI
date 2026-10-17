@@ -387,7 +387,7 @@ func (s *GraphService) ReconcileRun(ctx context.Context, ws, id string) (GraphRu
 				}
 				node.Input = normalized
 				node.InputHash = hash
-				node.Spec = &graph.NodeSpec{ProtocolVersion: graph.ProtocolVersion, Node: definitionNode, Input: normalized, InputHash: hash, AgentConfig: snapshot.AgentConfig, Skills: snapshot.Skills, Repository: repository}
+				node.Spec = &graph.NodeSpec{ProtocolVersion: graph.ProtocolVersion, Node: definitionNode, Input: normalized, InputHash: hash, AgentConfig: snapshot.AgentConfig, Skills: snapshot.Skills, Repository: repository, InputArtifacts: append([]graph.Artifact(nil), run.Artifacts...)}
 			}
 			number := len(node.Attempts) + 1
 			taskID := uuid.NewString()

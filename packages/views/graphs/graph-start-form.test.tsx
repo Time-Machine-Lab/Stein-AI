@@ -93,7 +93,9 @@ vi.mock("@multica/core/runtimes", async (original) => ({
         provider: "claude",
         status: "online",
         runtime_mode: "local",
-        metadata: { capabilities: ["graph-execution-v2"] },
+        metadata: {
+          capabilities: ["graph-execution-v2", "graph-file-delivery-v1"],
+        },
         daemon_id: "machine-1",
         device_info: "WIN-QGQL8EFDVAN · windows-amd64",
       },
@@ -103,7 +105,9 @@ vi.mock("@multica/core/runtimes", async (original) => ({
         provider: "claude",
         status: "offline",
         runtime_mode: "local",
-        metadata: { capabilities: ["graph-execution-v2"] },
+        metadata: {
+          capabilities: ["graph-execution-v2", "graph-file-delivery-v1"],
+        },
       },
       {
         id: "legacy",
@@ -442,5 +446,26 @@ describe("Graph start execution settings", () => {
       target: { value: "other" },
     });
     expect(screen.getByLabelText(labels.start.repository)).toHaveValue("");
+  });
+
+  it("does not require a Git repository for file bundle delivery", () => {
+    renderForm({
+      ...definition,
+      nodes: [
+        {
+          nodeKey: "work",
+          type: "agent",
+          agentId: "agent",
+          executionMode: "produce_files",
+          instructions: "Build files",
+        },
+      ],
+    });
+    expect(
+      screen.queryByLabelText(labels.start.repository),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(labels.start.base_sha),
+    ).not.toBeInTheDocument();
   });
 });

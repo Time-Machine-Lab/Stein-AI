@@ -31,6 +31,7 @@
     "instructions_placeholder": "描述需要完成的工作和必须提交的证据。",
     "mode": "代码交付",
     "none": "无代码产物",
+    "produce_files": "交付文件",
     "produce_commit": "生成提交",
     "verify_commit": "验证提交",
     "attempts": "最多尝试次数",

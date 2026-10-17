@@ -28,9 +28,22 @@ result using the current task credential:
 
 ```bash
 multica graph node context --output json
+multica graph node download-inputs -o ./graph-inputs --output json
 multica graph node submit --result-file /path/to/result.json --output json
 multica graph node block --reason-file /path/to/diagnostics.json --output json
 ```
+
+The download command retrieves frozen parent-task images and accepted upstream
+artifacts into this attempt's directory, verifies hashes and extracts delivery
+bundles. Inspect these images/files before declaring inputs inaccessible. Start
+your own preview from delivered implementation files; another task's localhost
+address and local paths are not a transferable service or file delivery.
+
+For `produce_files`, keep only intended deliverables in a dedicated directory,
+then run `multica graph node deliver ./output --output json`. Copy its returned
+`artifact` unchanged into the top-level `result.artifacts` array. A text summary
+alone cannot complete a file-producing node. Credentials, runtime state, links
+and dependency directories are rejected by the packaging command.
 
 For a node without code artifacts, a passing result is
 `{"outcome":"pass","output":{"summary":"Completed"}}`, with `output` matching

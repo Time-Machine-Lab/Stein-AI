@@ -101,11 +101,11 @@ export function GraphStartForm({
     }
   }, [previous.data]);
   const steps = version ? executionNodes(version.definition) : [];
+
   const needsRepository = steps.some(
     ({ node }) =>
       node.type === "agent" &&
-      node.executionMode &&
-      node.executionMode !== "none",
+      ["produce_commit", "verify_commit"].includes(node.executionMode ?? ""),
   );
   const repositories = useQuery({
     ...graphStartOptions(wsId, onConfigure ? undefined : rootIssueId),
@@ -157,6 +157,7 @@ export function GraphStartForm({
       !isGraphRuntimeSupported(
         runtime,
         requireV2 || Boolean(runtime.profile_id),
+        true,
       )
     )
       return t(($) => $.start.runtime_upgrade);

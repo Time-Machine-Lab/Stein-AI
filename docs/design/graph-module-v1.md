@@ -105,6 +105,25 @@ Agent 节点的必要配置如下。
 
 ## 6 冻结哪些内容
 
+2026-10-17 修复：运行启动时冻结父任务正文附件的 ID、文件名、媒体类型和大小，
+通过现有认证下载 API 获取有效地址，不将签名 URL 固定到快照。正文之外的评论附件、
+后来上传的附件和其他任务附件不会自动加入输入；被运行引用的输入附件受删除保护。
+
+文件型实现使用 `execution_mode: produce_files`，通过
+`multica graph node deliver <directory>` 上传带路径、大小、逐文件哈希清单的 ZIP。
+服务端核验当前 Task 上传收据及包内容；缺少已验证文件包时拒绝 pass，不能用文字、
+本机目录或 localhost 地址代替交付。普通文字节点保持 `none`，Git 交付模式保留。
+
+已接受的祖先产物随下游 NodeSpec 冻结；节点使用
+`multica graph node download-inputs -o ./graph-inputs` 下载原图和校验解包后的文件，
+在自己的工作目录启动预览服务，再执行页面检查和截图。普通 ZIP 输入按文件保存，
+只有 `bundle_format: multica-graph-files-v1` 且通过服务端校验的产物才按交付包解开。
+包限制为 2048 文件、20 MiB 压缩体积、32 MiB 解压体积；拒绝链接、跨目录路径、
+Windows 不兼容路径冲突和明确的凭据文件路径。
+
+该协议要求所有执行节点的 daemon 广告 `graph-file-delivery-v1`；旧版本在运行启动前
+明确提示更新，避免旧 CLI 执行不了下载命令或无法验证新增 manifest 字段。
+
 | 时点 | 固定内容 | 仍按当前状态检查 |
 | --- | --- | --- |
 | GraphVersion 发布 | 拓扑、Agent 绑定、平台管理的 Agent 指令与模型配置、skill bundle、输入输出契约、审批规则、协议版本 | 引用是否仍存在、成员资格、调用权限 |

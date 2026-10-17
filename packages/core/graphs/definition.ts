@@ -31,12 +31,10 @@ export function createSerialDefinition(
     name,
     inputSchema,
     nodes,
-    edges: nodes
-      .slice(1)
-      .map((node, index) => ({
-        from: nodes[index]!.nodeKey,
-        to: node.nodeKey,
-      })),
+    edges: nodes.slice(1).map((node, index) => ({
+      from: nodes[index]!.nodeKey,
+      to: node.nodeKey,
+    })),
   };
 }
 
@@ -357,7 +355,7 @@ export function importGraphDefinition(text: string): GraphDefinition {
       !agent.agentId ||
       !agent.instructions?.trim() ||
       agent.outputSchema?.type !== "object" ||
-      !["none", "produce_commit", "verify_commit"].includes(
+      !["none", "produce_files", "produce_commit", "verify_commit"].includes(
         agent.executionMode ?? "",
       ) ||
       !agent.maxAttempts ||

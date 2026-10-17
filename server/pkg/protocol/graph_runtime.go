@@ -11,3 +11,4 @@ type GraphRuntimeSnapshot struct {
 }
 
 const DaemonCapabilityGraphExecutionV2 = "graph-execution-v2"
+const DaemonCapabilityGraphFileDeliveryV1 = "graph-file-delivery-v1"

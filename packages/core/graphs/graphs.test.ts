@@ -310,6 +310,27 @@ describe("Graph controls", () => {
 });
 
 describe("serial step editor model", () => {
+  it("preserves required file delivery without requiring Git", () => {
+    const definition = createSerialDefinition(
+      "Build files",
+      [
+        {
+          nodeKey: "work",
+          type: "agent",
+          agentId: "agent-1",
+          instructions: "Build page",
+          executionMode: "produce_files",
+          maxAttempts: 2,
+          timeoutSeconds: 600,
+          outputSchema: { type: "object" },
+        },
+      ],
+      "member-1",
+    );
+    expect(importGraphDefinition(exportGraphDefinition(definition))).toEqual(
+      definition,
+    );
+  });
   it("imports and preserves agent execution settings above the old limits", () => {
     const definition = createSerialDefinition(
       "Long running",

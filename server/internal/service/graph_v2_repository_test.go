@@ -30,3 +30,14 @@ func TestGraphV2RepositoryRejectsAmbiguousParallelOutputs(t *testing.T) {
 		t.Fatal("parallel sibling output leaked into branch input")
 	}
 }
+
+func TestGraphV2FileInputsExcludeParallelSiblings(t *testing.T) {
+	d := graph.Definition{SchemaVersion: 2, Nodes: []graph.Node{{Key: "left"}, {Key: "right"}, {Key: "join"}, {Key: "after"}}, Edges: []graph.Edge{{From: "left", To: "join"}, {From: "right", To: "join"}, {From: "join", To: "after"}}}
+	run := GraphRunRecord{Scopes: []GraphScopeRecord{{ID: "root"}}, Nodes: []GraphNodeRunRecord{{ID: "left", NodeKey: "left", ScopeID: "root", State: "succeeded", Attempts: []GraphAttemptRecord{{TaskID: "left-task"}}}, {ID: "right", NodeKey: "right", ScopeID: "root"}, {ID: "after", NodeKey: "after", ScopeID: "root"}}, Artifacts: []graph.Artifact{{ID: "files", Type: graph.ArtifactAttachmentRef, ProducerTaskID: "left-task"}}}
+	if got := graphInputArtifactsV2(run, d, run.Nodes[1]); len(got) != 0 {
+		t.Fatal("parallel sibling files leaked into frozen input")
+	}
+	if got := graphInputArtifactsV2(run, d, run.Nodes[2]); len(got) != 1 || got[0].ID != "files" {
+		t.Fatal("joined predecessor files were not delivered")
+	}
+}

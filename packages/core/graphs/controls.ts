@@ -34,15 +34,17 @@ const activeStates = new Set(["active", "blocked", "waiting_approval"]);
 export function isGraphRuntimeSupported(
   runtime: Pick<RuntimeDevice, "provider" | "metadata">,
   requireV2 = false,
+  requireFileDelivery = false,
 ): boolean {
   const capabilities = Array.isArray(runtime.metadata.capabilities)
     ? runtime.metadata.capabilities
     : [];
   return (
-    capabilities.includes("graph-execution-v2") ||
-    (!requireV2 &&
-      runtime.provider === "codex" &&
-      capabilities.includes("graph-execution-v1"))
+    (!requireFileDelivery || capabilities.includes("graph-file-delivery-v1")) &&
+    (capabilities.includes("graph-execution-v2") ||
+      (!requireV2 &&
+        runtime.provider === "codex" &&
+        capabilities.includes("graph-execution-v1")))
   );
 }
 
@@ -52,10 +54,10 @@ export function canManageGraphRun(
 ): boolean {
   return Boolean(
     run &&
-    actor.userId &&
-    (run.initiatorId === actor.userId ||
-      actor.role === "owner" ||
-      actor.role === "admin"),
+      actor.userId &&
+      (run.initiatorId === actor.userId ||
+        actor.role === "owner" ||
+        actor.role === "admin"),
   );
 }
 
@@ -104,8 +106,8 @@ export function nodeCanRetry(node: GraphNodeRun): boolean {
   if (node.nodeType === "http")
     return Boolean(
       node.effect &&
-      ["unknown", "retryable", "completed"].includes(node.effect.state) &&
-      node.effect.attempts < 3,
+        ["unknown", "retryable", "completed"].includes(node.effect.state) &&
+        node.effect.attempts < 3,
     );
   if (!["agent", "script"].includes(node.nodeType)) return false;
   const attempts = node.attempts;
@@ -170,9 +172,9 @@ export function canDetachGraphRun(
 ): boolean {
   return Boolean(
     run &&
-    run.canDetach === true &&
-    GRAPH_TERMINAL_STATES.has(run.state) &&
-    canManageGraphRun(run, actor),
+      run.canDetach === true &&
+      GRAPH_TERMINAL_STATES.has(run.state) &&
+      canManageGraphRun(run, actor),
   );
 }
 

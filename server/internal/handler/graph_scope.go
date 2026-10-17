@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/service"
 )
 
 type graphScopeContextKey struct{}
@@ -51,8 +52,7 @@ WHERE a.task_id=$1 AND a.workspace_id=$2`, s.TaskID, r.Header.Get("X-Workspace-I
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/attachments/") {
 			id := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/attachments/"), "/")[0]
-			var allowed bool
-			err = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM attachment f WHERE f.id=$1 AND f.workspace_id=$2 AND (f.task_id=$3 OR EXISTS(SELECT 1 FROM graph_artifact a WHERE a.run_id=$4 AND a.document->>'type'='attachment_ref' AND a.document->>'id'=f.id::text)))`, id, r.Header.Get("X-Workspace-ID"), s.TaskID, s.RunID).Scan(&allowed)
+			allowed, err := service.GraphTaskCanReadAttachment(r.Context(), h.DB, r.Header.Get("X-Workspace-ID"), s.RunID, s.TaskID, id)
 			if err != nil || !allowed {
 				writeError(w, http.StatusNotFound, "attachment not found in Graph inputs")
 				return

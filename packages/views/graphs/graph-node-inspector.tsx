@@ -193,6 +193,9 @@ export function GraphNodeInspector({
                   }
                 >
                   <option value="none">{t(($) => $.editor.none)}</option>
+                  <option value="produce_files">
+                    {t(($) => $.editor.produce_files)}
+                  </option>
                   <option value="produce_commit">
                     {t(($) => $.editor.produce_commit)}
                   </option>

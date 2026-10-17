@@ -33,9 +33,14 @@ type ExecutionMode string
 
 const (
 	ExecutionNone          ExecutionMode = "none"
+	ExecutionProduceFiles  ExecutionMode = "produce_files"
 	ExecutionProduceCommit ExecutionMode = "produce_commit"
 	ExecutionVerifyCommit  ExecutionMode = "verify_commit"
 )
+
+func RequiresRepository(mode ExecutionMode) bool {
+	return mode == ExecutionProduceCommit || mode == ExecutionVerifyCommit
+}
 
 type BindingSource string
 
@@ -208,7 +213,7 @@ func validateNode(n Node) error {
 		if n.TimeoutSeconds < 1 {
 			return invalid(path+".timeout_seconds", "must be a positive integer")
 		}
-		if n.ExecutionMode != ExecutionNone && n.ExecutionMode != ExecutionProduceCommit && n.ExecutionMode != ExecutionVerifyCommit {
+		if n.ExecutionMode != ExecutionNone && n.ExecutionMode != ExecutionProduceFiles && n.ExecutionMode != ExecutionProduceCommit && n.ExecutionMode != ExecutionVerifyCommit {
 			return invalid(path+".execution_mode", "unsupported execution mode")
 		}
 		if n.ApproverID != "" {

@@ -90,6 +90,7 @@ func (s *GraphService) TaskContext(ctx context.Context, ws, taskID string) (Grap
 		return result, err
 	}
 	result = GraphTaskContext{WorkspaceID: ws, IssueID: node.IssueID, RunID: runID, NodeRunID: nodeID, State: run.State, ControlState: run.ControlState, Manifest: attempt.Manifest, ManifestHash: attempt.ManifestHash, RootSnapshot: run.RootSnapshot, Submissions: node.Submissions}
+	result.Artifacts = attempt.Manifest.NodeSpec.InputArtifacts
 	return result, nil
 }
 
@@ -150,6 +151,20 @@ func (s *GraphService) Submit(ctx context.Context, ws, taskID, key string, resul
 	}
 	if err = graph.ValidateResult(node.Spec.Node, result); err != nil {
 		return record, graphError("output_invalid", err.Error())
+	}
+	if result.Outcome == graph.OutcomePass {
+		for _, artifact := range result.Artifacts {
+			if artifact.ProducerTaskID == taskID && artifact.BundleFormat != "" {
+				if err = ValidateGraphAttachmentTx(ctx, tx, ws, taskID, artifact); err != nil {
+					return record, err
+				}
+			}
+		}
+	}
+	if result.Outcome == graph.OutcomePass && node.Spec.Node.ExecutionMode == graph.ExecutionProduceFiles {
+		if err = ValidateGraphFileDeliveryTx(ctx, tx, ws, taskID, result.Artifacts); err != nil {
+			return record, err
+		}
 	}
 	b, err := json.Marshal(result)
 	if err != nil {

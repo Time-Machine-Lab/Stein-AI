@@ -309,6 +309,7 @@ type GraphTaskContext struct {
 	ManifestHash string                  `json:"manifest_hash"`
 	RootSnapshot json.RawMessage         `json:"root_snapshot"`
 	Submissions  []GraphSubmissionRecord `json:"submissions"`
+	Artifacts    []graph.Artifact        `json:"artifacts,omitempty"`
 }
 
 func graphJSON(v any) ([]byte, error) { return json.Marshal(v) }

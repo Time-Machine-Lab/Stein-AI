@@ -31,6 +31,7 @@
     "instructions_placeholder": "작업 내용과 제출할 증거를 설명하세요.",
     "mode": "코드 전달",
     "none": "코드 산출물 없음",
+    "produce_files": "파일 전달",
     "produce_commit": "커밋 생성",
     "verify_commit": "커밋 검증",
     "attempts": "최대 시도 횟수",

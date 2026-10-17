@@ -69,7 +69,7 @@ func (s *GraphService) StartRun(ctx context.Context, ws, user string, p GraphSta
 			if err = graphUUIDs(runtime); err != nil {
 				return graphError("runtime_required", "every executable node requires a fixed runtime")
 			}
-			if string(node.ExecutionMode) != "none" && p.Repository == nil {
+			if graph.RequiresRepository(node.ExecutionMode) && p.Repository == nil {
 				return graphError("repository_required", "code nodes require a fixed repository input")
 			}
 		}
@@ -89,6 +89,10 @@ func (s *GraphService) StartRun(ctx context.Context, ws, user string, p GraphSta
 	}
 	if parentID != nil {
 		return run, graphError("invalid_root", "Graph requires a top-level issue")
+	}
+	rootSnapshot, err = freezeGraphInputAttachments(ctx, tx, ws, p.RootIssueID, rootSnapshot)
+	if err != nil {
+		return run, err
 	}
 	if s.PrepareRun == nil {
 		return run, graphError("capability_missing", "Graph run snapshot adapter is unavailable")

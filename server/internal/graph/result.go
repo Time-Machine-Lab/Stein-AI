@@ -3,6 +3,7 @@ package graph
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/pkg/graphfiles"
 	"regexp"
 	"strings"
 	"time"
@@ -77,6 +78,7 @@ type NodeSpec struct {
 	Skills          []SkillSnapshot  `json:"skills,omitempty"`
 	Repository      *RepositoryInput `json:"repository,omitempty"`
 	InstanceKey     string           `json:"instance_key,omitempty"`
+	InputArtifacts  []Artifact       `json:"input_artifacts,omitempty"`
 }
 
 // HumanNote is what a person wrote when they cleared a node's block. A node's
@@ -159,7 +161,7 @@ func CanonicalNodeSpec(spec NodeSpec) ([]byte, string, error) {
 		}
 		seen[skill.ID] = true
 	}
-	if spec.Node.ExecutionMode != ExecutionNone && spec.Repository == nil {
+	if RequiresRepository(spec.Node.ExecutionMode) && spec.Repository == nil {
 		return nil, "", invalid("repository", "code execution requires an immutable repository input")
 	}
 	if r := spec.Repository; r != nil {
@@ -259,6 +261,7 @@ type Artifact struct {
 	ContentHash    string       `json:"content_hash,omitempty"`
 	Size           int64        `json:"size,omitempty"`
 	MediaType      string       `json:"media_type,omitempty"`
+	BundleFormat   string       `json:"bundle_format,omitempty"`
 }
 
 type Result struct {
@@ -291,6 +294,7 @@ func ValidateResult(node Node, result Result) error {
 	}
 	seen := map[string]bool{}
 	hasProducedCommit := false
+	hasProducedFiles := false
 	for _, a := range result.Artifacts {
 		if a.ID == "" || seen[a.ID] || a.ProducerTaskID == "" {
 			return invalid("artifacts", "requires unique artifact IDs and producer identity")
@@ -313,6 +317,12 @@ func ValidateResult(node Node, result Result) error {
 			if !hashPattern.MatchString(a.ContentHash) || a.Size < 0 || a.MediaType == "" {
 				return invalid("artifacts", "invalid attachment artifact")
 			}
+			if a.BundleFormat != "" && (a.BundleFormat != graphfiles.Format || a.MediaType != "application/zip") {
+				return invalid("artifacts", "unsupported file bundle format or media type")
+			}
+			if a.ProducerTaskID == result.Identity.TaskID && a.MediaType == "application/zip" && a.Size > 22 && a.BundleFormat == graphfiles.Format {
+				hasProducedFiles = true
+			}
 		default:
 			return invalid("artifacts", "unsupported artifact type")
 		}
@@ -323,6 +333,9 @@ func ValidateResult(node Node, result Result) error {
 		}
 		if node.ExecutionMode == ExecutionProduceCommit && !hasProducedCommit {
 			return invalid("artifacts", "produce_commit requires a Git artifact produced by this task")
+		}
+		if node.ExecutionMode == ExecutionProduceFiles && !hasProducedFiles {
+			return invalid("artifacts", "produce_files requires a verified file bundle produced by this task; run multica graph node deliver <directory>")
 		}
 		if node.ExecutionMode == ExecutionVerifyCommit && !commitPattern.MatchString(result.TestedCommitSHA) {
 			return invalid("tested_commit_sha", "verify_commit requires the tested commit SHA")

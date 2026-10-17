@@ -97,6 +97,10 @@ func newGraphCommand() *cobra.Command {
 	node := &cobra.Command{Use: "node", Short: "Operate only on the current Graph task"}
 	cmd.AddCommand(node)
 	node.AddCommand(&cobra.Command{Use: "context", Short: "Read the current attempt's fixed input and execution manifest", Args: cobra.NoArgs, RunE: runGraphNodeContext})
+	node.AddCommand(&cobra.Command{Use: "deliver <directory>", Short: "Package and upload this node's deliverable files", Args: exactArgs(1), RunE: runGraphNodeDeliver})
+	download := &cobra.Command{Use: "download-inputs", Short: "Download frozen images and accepted file deliveries into this attempt", Args: cobra.NoArgs, RunE: runGraphNodeDownloadInputs}
+	download.Flags().StringP("output-dir", "o", "./graph-inputs", "New local directory for this attempt's input files")
+	node.AddCommand(download)
 	comment := &cobra.Command{Use: "comment", Short: "Post a diagnostic comment on the current Graph node issue", Long: "Post a diagnostic comment on the current Graph node issue using its scoped context. Comments do not change fixed input, schedule work or submit results.", Args: cobra.NoArgs, RunE: runGraphNodeComment}
 	comment.Flags().String("body", "", "Diagnostic comment text (decodes \\n, \\r, \\t, \\\\)")
 	comment.Flags().String("body-file", "", "Read UTF-8 text from a file inside the task workdir; preserves literal backslashes")

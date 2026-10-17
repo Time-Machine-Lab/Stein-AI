@@ -672,7 +672,7 @@ func (s *GraphService) scheduleNodeV2(ctx context.Context, tx pgx.Tx, run *Graph
 		}
 		n.Input = input
 		n.InputHash = hash
-		n.Spec = &graph.NodeSpec{ProtocolVersion: graph.ProtocolVersion, Node: definition, Input: input, InputHash: hash, AgentConfig: snapshot.AgentConfig, Skills: snapshot.Skills, Repository: repository, InstanceKey: n.InstanceKey}
+		n.Spec = &graph.NodeSpec{ProtocolVersion: graph.ProtocolVersion, Node: definition, Input: input, InputHash: hash, AgentConfig: snapshot.AgentConfig, Skills: snapshot.Skills, Repository: repository, InstanceKey: n.InstanceKey, InputArtifacts: graphInputArtifactsV2(*run, version.Definition, *n)}
 	}
 	number := len(n.Attempts) + 1
 	taskID := uuid.NewString()

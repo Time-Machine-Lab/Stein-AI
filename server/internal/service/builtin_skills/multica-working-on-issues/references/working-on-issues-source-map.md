@@ -2,6 +2,16 @@
 
 ## Graph V1 exception (2026-10-13)
 
+- `server/cmd/multica/cmd_graph_files.go`: task-scoped `deliver` and
+  `download-inputs` reuse authenticated attachment upload/download, verify
+  identity/hash/size, and materialize images plus immutable file bundles.
+- `server/pkg/graphfiles/bundle.go`: bounded portable ZIP/manifest contract,
+  file hashes, explicit private-path exclusions and fresh-directory extraction.
+- `server/internal/service/graph_artifact.go`: `produce_files` requires the
+  current task's matching server-verified bundle receipt; a text result cannot pass.
+- `server/internal/service/graph_input_attachment.go`: freeze parent-issue
+  attachment identities and authorize their existing authenticated downloads.
+
 - `server/cmd/multica/cmd_graph.go`: `newGraphCommand` defines human management
   and task-scoped node commands; `graphCLIClient` separates credentials;
   `submitGraphNodeResult` binds and validates identity, validates result schema,

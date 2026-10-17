@@ -1,0 +1,13 @@
+CREATE OR REPLACE FUNCTION graph_guard_attachment_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS(SELECT 1 FROM graph_artifact WHERE id=OLD.id AND workspace_id=OLD.workspace_id AND document->>'type'='attachment_ref') THEN
+    RAISE EXCEPTION 'graph_artifact_retained: accepted Graph artifacts are immutable' USING ERRCODE='P0001';
+  END IF;
+  IF EXISTS(
+    SELECT 1 FROM graph_run WHERE workspace_id=OLD.workspace_id
+    AND document#>'{root_snapshot,attachments}' @> jsonb_build_array(jsonb_build_object('id',OLD.id::text))
+  ) THEN
+    RAISE EXCEPTION 'graph_input_retained: frozen Graph input attachments are retained' USING ERRCODE='P0001';
+  END IF;
+  RETURN OLD;
+END $$;

@@ -199,7 +199,7 @@ func (s *GraphService) validateTrigger(ctx context.Context, tx pgx.Tx, ws, user,
 		if !exists {
 			return graphError("not_found", "runtime does not belong to this workspace")
 		}
-		if node.ExecutionMode != graph.ExecutionNone && p.Repository == nil {
+		if graph.RequiresRepository(node.ExecutionMode) && p.Repository == nil {
 			return graphError("repository_required", "code triggers require a frozen repository and commit")
 		}
 		return nil

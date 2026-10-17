@@ -241,6 +241,11 @@ func (h *Handler) validateGraphReceiptRequest(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) validateGraphArtifacts(ctx context.Context, tx pgx.Tx, run service.GraphRunRecord, node service.GraphNodeRunRecord, result graph.Result, receipt service.GraphTaskReceipt) error {
+	if result.Outcome == graph.OutcomePass && node.Spec != nil && node.Spec.Node.ExecutionMode == graph.ExecutionProduceFiles {
+		if err := service.ValidateGraphFileDeliveryTx(ctx, tx, run.WorkspaceID, result.Identity.TaskID, result.Artifacts); err != nil {
+			return err
+		}
+	}
 	var delivered []struct {
 		ArtifactID     string `json:"artifact_id"`
 		RepositoryID   string `json:"repository_id"`

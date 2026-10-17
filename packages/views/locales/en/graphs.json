@@ -31,6 +31,7 @@
     "instructions_placeholder": "Describe the work and the evidence this step must return.",
     "mode": "Code delivery",
     "none": "No code artifact",
+    "produce_files": "Deliver files",
     "produce_commit": "Produce a commit",
     "verify_commit": "Verify a commit",
     "attempts": "Maximum attempts",

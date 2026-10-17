@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/graphfiles"
 )
 
 // extContentTypes overrides http.DetectContentType for extensions it gets wrong.
@@ -381,6 +382,7 @@ func (h *Handler) groupChatMessageAttachments(ctx context.Context, workspaceID s
 
 func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	graphUpload := false
+	bundleVerified := false
 	if h.Storage == nil {
 		writeError(w, http.StatusServiceUnavailable, "file upload not configured")
 		return
@@ -596,9 +598,12 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		} else {
 			response := h.attachmentToResponse(att, attachmentURLModeFromRequest(r))
 			if graphUpload {
+				if contentType == "application/zip" {
+					bundleVerified = graphfiles.Validate(data) == nil
+				}
 				digest := sha256.Sum256(data)
 				response.ContentHash = hex.EncodeToString(digest[:])
-				if _, err := h.DB.Exec(r.Context(), `INSERT INTO graph_attachment_upload(attachment_id,workspace_id,task_id,content_hash,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`, att.ID, att.WorkspaceID, params.TaskID, response.ContentHash, int64(len(data)), contentType); err != nil {
+				if _, err := h.DB.Exec(r.Context(), `INSERT INTO graph_attachment_upload(attachment_id,workspace_id,task_id,content_hash,size_bytes,media_type,bundle_verified) VALUES($1,$2,$3,$4,$5,$6,$7)`, att.ID, att.WorkspaceID, params.TaskID, response.ContentHash, int64(len(data)), contentType, bundleVerified); err != nil {
 					writeError(w, http.StatusServiceUnavailable, "Graph attachment receipt could not be saved; upload again")
 					return
 				}
