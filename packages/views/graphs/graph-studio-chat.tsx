@@ -411,6 +411,11 @@ function GraphConversationStarter({
         }}
         isRunning={builder.starting}
         disabled={disabled || Boolean(blocker) || builder.starting}
+        // Say why the composer is closed instead of the generic "archived".
+        noAgent={blocker === "no_agents"}
+        agentRuntimeRequired={
+          blocker === "no_runtime" || blocker === "executor"
+        }
         agentName={t(($) => $.studio.builder.chat_title)}
         draftKeyOverride={`graph-builder:new:${draftKey}`}
         editorKeyOverride={`graph-builder:new:${draftKey}`}
@@ -665,6 +670,7 @@ function GraphConversation({
         onStop={() => void builder.stop()}
         isRunning={pending}
         disabled={!runtimeOnline || disabled}
+        agentRuntimeRequired={!runtimeOnline}
         agentName={t(($) => $.studio.builder.chat_title)}
         draftKeyOverride={`graph-builder:${ai.sessionId}`}
         editorKeyOverride={`graph-builder:${ai.sessionId}`}

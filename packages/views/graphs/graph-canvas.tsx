@@ -15,7 +15,6 @@ import {
   EdgeLabelRenderer,
   Handle,
   MarkerType,
-  MiniMap,
   Position,
   ReactFlow,
   getSmoothStepPath,
@@ -343,6 +342,7 @@ export function GraphCanvas({
   marks,
   issues,
   overview,
+  fitOnOpen,
   className,
   children,
 }: {
@@ -368,6 +368,11 @@ export function GraphCanvas({
    * the worst outcome; an editor is read node by node, so it stays legible.
    */
   overview?: boolean;
+  /**
+   * Fit the whole flow when the canvas opens instead of restoring the saved
+   * viewport, which was recorded for whatever pane size the last editor had.
+   */
+  fitOnOpen?: boolean;
   className?: string;
   /** Extra `<Panel>`s, rendered inside the flow. */
   children?: ReactNode;
@@ -440,6 +445,15 @@ export function GraphCanvas({
     "--xy-minimap-background-color": "var(--card)",
     "--xy-background-pattern-dots-color": "var(--border)",
   } as CSSProperties;
+  // An editor opens on the beginning of the flow at a readable zoom: a long
+  // flow fitted whole is a row of unreadable boxes. Four columns of the
+  // automatic layout (300px apart) are what fits beside the conversation.
+  const leftmost = Math.min(...nodes.map((node) => node.position.x));
+  const leading = fitOnOpen
+    ? nodes
+        .filter((node) => node.position.x <= leftmost + 1000)
+        .map((node) => ({ id: node.id }))
+    : undefined;
   const insert =
     editable && onInsertOnEdge
       ? (edge: GraphEdge, type: string) => {
@@ -461,13 +475,16 @@ export function GraphCanvas({
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           style={style}
-          fitView={overview || !definition.layout?.viewport}
+          fitView={overview || fitOnOpen || !definition.layout?.viewport}
           fitViewOptions={{
-            minZoom: overview ? 0.3 : 0.65,
+            minZoom: overview ? 0.3 : fitOnOpen ? 0.6 : 0.65,
             maxZoom: 1,
             padding: 0.12,
+            ...(leading?.length ? { nodes: leading } : {}),
           }}
-          defaultViewport={overview ? undefined : definition.layout?.viewport}
+          defaultViewport={
+            overview || fitOnOpen ? undefined : definition.layout?.viewport
+          }
           minZoom={0.1}
           maxZoom={4}
           nodesDraggable={editable}
@@ -608,14 +625,9 @@ export function GraphCanvas({
         >
           {children}
           <Background gap={20} size={1} />
+          {/* No minimap: beside a conversation or a record pane it is a blank
+              box over the flow, and fit-to-view already does its job. */}
           <Controls showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor="var(--muted)"
-            maskColor="var(--background)"
-            className="!hidden sm:!block"
-          />
         </ReactFlow>
       </InsertContext.Provider>
     </div>

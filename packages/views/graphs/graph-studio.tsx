@@ -349,7 +349,7 @@ export function GraphStudio({
           ? t(($) => $.studio.step_settings)
           : t(($) => $.studio.ux.flow_settings)
       }
-      className="absolute inset-y-2 right-2 z-10 flex w-[min(400px,calc(100%-1rem))] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
+      className="absolute inset-y-2 right-2 z-10 flex w-[min(460px,calc(100%-1rem))] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
     >
       <header className="flex min-h-12 shrink-0 items-center gap-2.5 border-b px-4">
         {drawer.kind === "node" && selected ? (
@@ -459,6 +459,7 @@ export function GraphStudio({
         definition={scope}
         onChange={editScope}
         onInsertOnEdge={insertOnEdge}
+        fitOnOpen
         selectedKey={selectedKey}
         onSelect={select}
         disabled={disabled}
