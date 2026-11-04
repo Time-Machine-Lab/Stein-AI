@@ -73,6 +73,15 @@ interface GraphDraftState {
   bindAi: (key: string, ai: GraphDraftAi) => void;
   /** Records the assistant reply whose draft is now in `definition`. */
   markAiApplied: (key: string, messageId: string) => void;
+  /**
+   * Changes who new work defaults to. Callers must not do this while a turn is
+   * in flight: aliases are positional, and a reply written against the old
+   * directory would merge into the wrong teammate.
+   */
+  updateAi: (
+    key: string,
+    patch: Partial<Pick<GraphDraftAi, "executorId" | "scopeIds" | "approverId">>,
+  ) => void;
   /** Unbinds the conversation without touching the definition. */
   clearAi: (key: string) => void;
   clearWorkspace: (slug: string, adapter?: StorageAdapter) => void;
@@ -383,6 +392,17 @@ export function createGraphDraftStore(storage: StorageAdapter) {
             ...current,
             ai: { ...current.ai, appliedMessageId: messageId },
           });
+      },
+      updateAi: (key, patch) => {
+        const current = get().documents[key];
+        if (!current?.ai) return;
+        const ai = { ...current.ai, ...patch };
+        // The executor reads as `agent_default`, so it always leads the scope.
+        ai.scopeIds = [
+          ai.executorId,
+          ...ai.scopeIds.filter((id) => id !== ai.executorId),
+        ];
+        sync(key, { ...current, ai });
       },
       clearAi: (key) => {
         const current = get().documents[key];
