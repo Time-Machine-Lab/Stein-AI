@@ -2,7 +2,13 @@
 
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  MoreHorizontal,
+  PauseCircle,
+} from "lucide-react";
+import { Panel } from "@xyflow/react";
 import { toast } from "sonner";
 import {
   canApproveGraphRun,
@@ -19,6 +25,7 @@ import {
   asSchema,
   graphStartOptions,
   graphPendingApprovals,
+  graphRunProgress,
   GRAPH_TERMINAL_STATES,
   type GraphNodeRun,
   type GraphRun,
@@ -36,6 +43,19 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { NativeSelect } from "@multica/ui/components/ui/native-select";
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@multica/ui/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
+import { cn } from "@multica/ui/lib/utils";
+import {
   AlertDialog,
   AlertDialogContent,
   AlertDialogHeader,
@@ -48,7 +68,7 @@ import {
 import { AppLink, useNavigation } from "../navigation";
 import { PageHeader } from "../layout/page-header";
 import { TranscriptButton } from "../common/task-transcript";
-import { useT } from "../i18n";
+import { useT, useTimeAgo } from "../i18n";
 import {
   Field,
   GraphError,
@@ -57,7 +77,7 @@ import {
   useGraphActor,
   useGraphCommandKey,
 } from "./shared";
-import { GraphCanvas } from "./graph-canvas";
+import { GraphCanvas, GraphStateLegend } from "./graph-canvas";
 import { GraphArtifactCards, GraphValueView } from "./graph-result-view";
 
 // States worth opening a run page on, most urgent first. A run that is live,
@@ -112,24 +132,6 @@ function focusNodeId(nodes: GraphNodeRun[]): string {
   // so the reader lands on the answer instead of an empty box.
   return (
     (nodes.filter((node) => node.output).at(-1) ?? nodes.at(-1))?.id ?? ""
-  );
-}
-
-/** Appendix blocks of the rail: labelled, closed, out of the reading path. */
-function RailDetails({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <details className="min-w-0 rounded-xl border bg-card">
-      <summary className="cursor-pointer px-4 py-3 text-body font-medium">
-        {label}
-      </summary>
-      <div className="min-w-0 space-y-3 px-4 pb-4">{children}</div>
-    </details>
   );
 }
 
@@ -496,10 +498,80 @@ function ApprovalCard({
   );
 }
 
+type RailTab =
+  | "step"
+  | "result"
+  | "artifacts"
+  | "approvals"
+  | "input"
+  | "events"
+  | "raw";
+
+/**
+ * Something on this run is waiting for a person. One line with the action,
+ * and the full gate (evidence, approvers, reason) one click away, so a pending
+ * decision never pushes the flow off screen.
+ */
+function ApprovalBanner({
+  title,
+  canDecide,
+  pending,
+  expanded,
+  onToggle,
+  onApprove,
+  children,
+}: {
+  title: string;
+  canDecide: boolean;
+  pending: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onApprove: () => void;
+  children: ReactNode;
+}) {
+  const { t } = useT("graphs");
+  return (
+    <section className="rounded-xl border border-warning/40 bg-warning/5">
+      <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+        <PauseCircle className="size-4 shrink-0 text-warning" />
+        <p className="min-w-0 flex-1 text-body font-medium">{title}</p>
+        <Button size="sm" variant="ghost" onClick={onToggle}>
+          {expanded
+            ? t(($) => $.studio.ux.hide_details)
+            : t(($) => $.studio.ux.view_details)}
+        </Button>
+        {canDecide && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              // A rejection needs a reason, so it opens the gate rather than
+              // deciding from here.
+              onClick={() => {
+                if (!expanded) onToggle();
+              }}
+            >
+              {t(($) => $.studio.ux.reject)}
+            </Button>
+            <Button size="sm" disabled={pending} onClick={onApprove}>
+              {t(($) => $.studio.ux.approve)}
+            </Button>
+          </>
+        )}
+      </div>
+      {expanded && (
+        <div className="border-t border-warning/30 p-3">{children}</div>
+      )}
+    </section>
+  );
+}
+
 function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
   const { t } = useT("graphs");
   const actor = useGraphActor(wsId);
   const paths = useWorkspacePaths();
+  const timeAgo = useTimeAgo();
   const members = useQuery(memberListOptions(wsId));
   const repositories = useQuery(graphStartOptions(wsId, run.rootIssueId));
   const control = useControlGraphRun(wsId);
@@ -512,6 +584,8 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
   const [selectedScope, setSelectedScope] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [narrowPane, setNarrowPane] = useState<"flow" | "details">("flow");
+  const [railTab, setRailTab] = useState<RailTab>("step");
+  const [openGate, setOpenGate] = useState("");
   const [replacement, setReplacement] = useState<{
     approval: GraphApproval;
     previousApproverId: string;
@@ -520,7 +594,9 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
   const pending =
     control.isPending || approval.isPending || replaceApprover.isPending;
   const actions = graphRunActions(run, actor);
+  const primaryActions = actions.filter((action) => action !== "archive");
   const controlState = graphControlState(run);
+  const progress = graphRunProgress(run);
   const actionLabels: Record<GraphRunAction, string> = {
     pause: t(($) => $.run.pause),
     resume: t(($) => $.run.resume),
@@ -563,6 +639,7 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
       {
         onSuccess: () => {
           setReason("");
+          setOpenGate("");
           toast.success(t(($) => $.run.decision_saved));
         },
       },
@@ -574,8 +651,6 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
     : run.approval
       ? [run.approval]
       : [];
-  // A pending gate blocks the run, so it belongs above the flow where nothing
-  // can hide it. A decided gate is history and belongs with the rest of it.
   const pendingGates = gates.filter((gate) => gate.state === "pending");
   const settledGates = gates.filter((gate) => gate.state !== "pending");
   const pendingForActor = new Set(
@@ -615,6 +690,46 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
         (item) => item.nodeKey === selectedNode.nodeKey,
       )
     : undefined;
+  const blockedNode =
+    run.state === "blocked"
+      ? run.nodes.find((node) => node.state === "blocked")
+      : undefined;
+  const nodeName = (id?: string) => {
+    const node = run.nodes.find((item) => item.id === id);
+    return node?.label || node?.nodeKey || t(($) => $.run.approval);
+  };
+  const showNode = (node: GraphNodeRun) => {
+    if (node.scopeId && node.scopeId !== currentScopeId)
+      setSelectedScope(node.scopeId);
+    setSelectedNodeId(node.id);
+    setRailTab("step");
+    setNarrowPane("details");
+  };
+
+  const approvalCard = (gate: GraphApproval) => (
+    <ApprovalCard
+      key={gate.id}
+      run={run}
+      gate={gate}
+      members={members.data ?? []}
+      repositories={repositories.data?.repositories ?? []}
+      canDecide={
+        gate.state === "pending" &&
+        pendingForActor.has(gate.id) &&
+        canApproveGraphRun(run, actor)
+      }
+      canReplace={
+        gate.state === "pending" && canReplaceGraphApprover(run, actor)
+      }
+      pending={pending}
+      reason={reason}
+      onReasonChange={setReason}
+      onDecide={decide}
+      onReplace={(approvalGate, previousApproverId) =>
+        setReplacement({ approval: approvalGate, previousApproverId })
+      }
+    />
+  );
 
   const flowPane = (
     <div
@@ -659,11 +774,13 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
             )}
             onSelect={(key) => {
               const node = visibleNodes.find((item) => item.nodeKey === key);
-              if (!node) return;
-              setSelectedNodeId(node.id);
-              setNarrowPane("details");
+              if (node) showNode(node);
             }}
-          />
+          >
+            <Panel position="bottom-left" className="!mb-3 !ml-14">
+              <GraphStateLegend />
+            </Panel>
+          </GraphCanvas>
         ) : (
           <section className="space-y-3 rounded-xl border bg-card p-4">
             <h2 className="text-body font-semibold">{t(($) => $.run.nodes)}</h2>
@@ -673,10 +790,7 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
                   <button
                     type="button"
                     className="flex w-full flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-left hover:bg-accent"
-                    onClick={() => {
-                      setSelectedNodeId(node.id);
-                      setNarrowPane("details");
-                    }}
+                    onClick={() => showNode(node)}
                   >
                     <span className="min-w-0 flex-1 break-all text-body">
                       {node.label || node.nodeKey}
@@ -692,160 +806,205 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
     </div>
   );
 
+  const tabs: { value: RailTab; label: string; show: boolean }[] = [
+    { value: "step", label: t(($) => $.studio.ux.tab_step), show: true },
+    {
+      value: "result",
+      label: t(($) => $.studio.ux.tab_output),
+      show: Boolean(run.output),
+    },
+    {
+      value: "artifacts",
+      label: t(($) => $.studio.ux.tab_artifacts),
+      show: run.artifacts.length > 0,
+    },
+    {
+      value: "approvals",
+      label: t(($) => $.studio.ux.tab_approvals),
+      show: settledGates.length > 0,
+    },
+    { value: "input", label: t(($) => $.studio.ux.tab_input), show: true },
+    { value: "events", label: t(($) => $.studio.ux.tab_events), show: true },
+    { value: "raw", label: t(($) => $.studio.ux.tab_raw), show: true },
+  ];
+  const activeTab = tabs.some((tab) => tab.value === railTab && tab.show)
+    ? railTab
+    : "step";
+
   const railPane = (
     <aside
       data-testid="run-rail"
       aria-label={t(($) => $.run.details)}
-      className={`${narrowPane === "details" ? "block" : "hidden xl:block"} min-h-0 min-w-0 space-y-4 xl:overflow-y-auto xl:pe-1`}
+      className={`${narrowPane === "details" ? "flex" : "hidden xl:flex"} min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card`}
     >
-      {run.output && (
-        <section
-          data-testid="run-result"
-          className="min-w-0 space-y-3 rounded-xl border bg-card p-4"
-        >
-          <h2 className="text-body font-semibold">{t(($) => $.run.result)}</h2>
-          <GraphValueView
-            value={run.output}
-            schema={run.definition?.outputSchema}
-          />
-        </section>
-      )}
-      {selectedNode ? (
-        <NodeDetail
-          wsId={wsId}
-          node={selectedNode}
-          definition={selectedDefinition}
-          canManage={
-            !run.archivedAt &&
-            canManageGraphRun(run, actor) &&
-            run.controlState === "run" &&
-            run.state === "blocked"
-          }
-          pending={pending}
-          reason={reason}
-          onReasonChange={setReason}
-          onAction={(action, nodeId) => {
-            if (selectedNode.nodeType === "http" && action === "retry") {
-              setReason("");
-              setHttpRetry(selectedNode);
-            } else act(action, nodeId);
-          }}
-        />
-      ) : (
-        <p className="rounded-xl border border-dashed p-4 text-caption text-muted-foreground">
-          {t(($) => $.run.select_node)}
-        </p>
-      )}
-      {run.artifacts.length > 0 && (
-        <RailDetails label={t(($) => $.run.artifacts)}>
-          <GraphArtifactCards
-            artifacts={run.artifacts}
-            repositories={repositories.data?.repositories}
-          />
-        </RailDetails>
-      )}
-      {settledGates.map((gate) => (
-        <ApprovalCard
-          key={gate.id}
-          run={run}
-          gate={gate}
-          members={members.data ?? []}
-          repositories={repositories.data?.repositories ?? []}
-          canDecide={false}
-          canReplace={false}
-          pending={pending}
-          reason={reason}
-          onReasonChange={setReason}
-          onDecide={decide}
-          onReplace={() => undefined}
-        />
-      ))}
-      <RailDetails label={t(($) => $.run.input)}>
-        <GraphValueView
-          value={run.input}
-          schema={run.definition?.inputSchema}
-        />
-      </RailDetails>
-      <RailDetails label={t(($) => $.production.events)}>
-        <ol className="space-y-3">
-          {run.events.map((event, index) => (
-            <li key={String(event.id ?? index)} className="border-l-2 pl-4">
-              <p className="text-caption text-muted-foreground">
-                {typeof event.created_at === "string"
-                  ? new Date(event.created_at).toLocaleString()
-                  : ""}
-              </p>
-              <p className="mt-1 text-body font-medium">
-                {String(event.type ?? event.event_type ?? event.kind ?? "")}
-              </p>
-              <GraphValueView
-                value={event.payload ?? event.data ?? event.detail}
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setRailTab(value as RailTab)}
+        className="min-h-0 flex-1 gap-0"
+      >
+        <div className="shrink-0 overflow-x-auto border-b px-2">
+          <TabsList variant="line">
+            {tabs
+              .filter((tab) => tab.show)
+              .map((tab) => (
+                <TabsTrigger key={tab.value} value={tab.value}>
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+          </TabsList>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <TabsContent value="step">
+            {selectedNode ? (
+              <NodeDetail
+                wsId={wsId}
+                node={selectedNode}
+                definition={selectedDefinition}
+                canManage={
+                  !run.archivedAt &&
+                  canManageGraphRun(run, actor) &&
+                  run.controlState === "run" &&
+                  run.state === "blocked"
+                }
+                pending={pending}
+                reason={reason}
+                onReasonChange={setReason}
+                onAction={(action, nodeId) => {
+                  if (selectedNode.nodeType === "http" && action === "retry") {
+                    setReason("");
+                    setHttpRetry(selectedNode);
+                  } else act(action, nodeId);
+                }}
               />
-            </li>
-          ))}
-        </ol>
-      </RailDetails>
-      <JsonDetails
-        label={t(($) => $.production.raw_details)}
-        value={{
-          id: run.id,
-          revision: run.revision,
-          input_hash: run.inputHash,
-          version_id: run.versionId,
-        }}
-      />
+            ) : (
+              <p className="rounded-xl border border-dashed p-4 text-caption text-muted-foreground">
+                {t(($) => $.run.select_node)}
+              </p>
+            )}
+          </TabsContent>
+          <TabsContent value="result">
+            {run.output && (
+              <section data-testid="run-result" className="min-w-0 space-y-3">
+                <GraphValueView
+                  value={run.output}
+                  schema={run.definition?.outputSchema}
+                />
+              </section>
+            )}
+          </TabsContent>
+          <TabsContent value="artifacts">
+            <GraphArtifactCards
+              artifacts={run.artifacts}
+              repositories={repositories.data?.repositories}
+            />
+          </TabsContent>
+          <TabsContent value="approvals" className="space-y-3">
+            {settledGates.map(approvalCard)}
+          </TabsContent>
+          <TabsContent value="input">
+            <GraphValueView
+              value={run.input}
+              schema={run.definition?.inputSchema}
+            />
+          </TabsContent>
+          <TabsContent value="events">
+            <ol className="space-y-3">
+              {run.events.map((event, index) => (
+                <li key={String(event.id ?? index)} className="border-l-2 pl-4">
+                  <p className="text-caption text-muted-foreground">
+                    {typeof event.created_at === "string"
+                      ? new Date(event.created_at).toLocaleString()
+                      : ""}
+                  </p>
+                  <p className="mt-1 text-body font-medium">
+                    {String(event.type ?? event.event_type ?? event.kind ?? "")}
+                  </p>
+                  <GraphValueView
+                    value={event.payload ?? event.data ?? event.detail}
+                  />
+                </li>
+              ))}
+            </ol>
+          </TabsContent>
+          <TabsContent value="raw">
+            <JsonDetails
+              label={t(($) => $.production.raw_details)}
+              open
+              value={{
+                id: run.id,
+                revision: run.revision,
+                input_hash: run.inputHash,
+                version_id: run.versionId,
+              }}
+            />
+          </TabsContent>
+        </div>
+      </Tabs>
     </aside>
   );
 
+  const canRework = Boolean(
+    run.graphId &&
+      GRAPH_TERMINAL_STATES.has(run.state) &&
+      canManageGraphRun(run, actor),
+  );
+  const archivable = actions.includes("archive");
+  const hasMore =
+    archivable || Boolean(run.previousRunId) || Boolean(run.graphId);
+
   return (
-    <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
+    <div className="mx-auto flex h-full w-full max-w-[1500px] flex-col gap-3">
       <GraphError
         error={control.error ?? approval.error ?? replaceApprover.error}
       />
-      <header className="flex flex-wrap items-start gap-x-4 gap-y-3">
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <header className="flex flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="min-w-0 truncate text-title font-semibold">
+              {run.graphName || t(($) => $.run.title)}
+            </h1>
+            <GraphState state={run.state} />
+            {controlState && <GraphState state={controlState} />}
+          </div>
+          <p className="flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground">
+            <span>#{run.id.slice(0, 8)}</span>
+            {run.createdAt && <span>· {timeAgo(run.createdAt)}</span>}
+            <span>·</span>
             <AppLink
               href={paths.issueDetail(run.rootIssueId)}
-              className="text-caption underline underline-offset-4"
+              className="underline underline-offset-4 hover:text-foreground"
             >
               {t(($) => $.run.parent)}
             </AppLink>
-            <GraphState state={run.state} />
-            {controlState && <GraphState state={controlState} />}
-            <span className="text-caption text-muted-foreground">
-              {t(($) => $.page.revision, { revision: run.revision })}
-            </span>
-            {run.previousRunId && (
-              <AppLink
-                href={paths.graphRun(run.previousRunId)}
-                className="text-caption underline underline-offset-4"
-              >
-                {t(($) => $.production.previous_run)}
-              </AppLink>
-            )}
-          </div>
-          {run.graphName && (
-            <h1 className="text-title font-semibold">{run.graphName}</h1>
-          )}
-          {run.blockReason && (
-            <p role="status" className="text-body text-destructive">
-              {run.blockReason}
-            </p>
-          )}
-          {controlState === "cancel_requested" && (
-            <p role="status" className="text-body text-muted-foreground">
-              {t(($) => $.run.cancel_pending)}
-            </p>
-          )}
-          {!actions.length && !canApproveGraphRun(run, actor) && (
-            <p className="text-caption text-muted-foreground">
-              {t(($) => $.run.no_controls)}
-            </p>
-          )}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {actions.map((action) => (
+        {progress.total > 0 && (
+          <div className="flex w-56 items-center gap-2">
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={progress.total}
+              aria-valuenow={progress.done}
+              className="h-2 flex-1 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className={cn(
+                  "h-full rounded-full transition-[width]",
+                  progress.failed ? "bg-destructive" : "bg-primary",
+                )}
+                style={{ width: `${(progress.done / progress.total) * 100}%` }}
+              />
+            </div>
+            <span className="text-caption tabular-nums text-muted-foreground">
+              {t(($) => $.studio.ux.progress, {
+                done: progress.done,
+                total: progress.total,
+              })}
+            </span>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {primaryActions.map((action) => (
             <Button
               key={action}
               variant={action === "cancel" ? "destructive" : "outline"}
@@ -858,62 +1017,142 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
               {actionLabels[action]}
             </Button>
           ))}
-          {run.graphId &&
-            GRAPH_TERMINAL_STATES.has(run.state) &&
-            canManageGraphRun(run, actor) && (
-              <AppLink
-                href={`${paths.graphDetail(run.graphId)}?issue=${encodeURIComponent(run.rootIssueId)}&previous_run=${encodeURIComponent(run.id)}`}
-                className="inline-flex rounded-md border px-3 py-2 text-body font-medium hover:bg-accent"
+          {canRework && run.graphId && (
+            <Button
+              size="sm"
+              render={
+                <AppLink
+                  href={`${paths.graphDetail(run.graphId)}?issue=${encodeURIComponent(run.rootIssueId)}&previous_run=${encodeURIComponent(run.id)}`}
+                />
+              }
+              nativeButton={false}
+            >
+              {t(($) => $.production.rework)}
+            </Button>
+          )}
+          {hasMore && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<Button variant="ghost" size="icon-sm" />}
+                aria-label={t(($) => $.studio.ux.more_actions)}
               >
-                {t(($) => $.production.rework)}
-              </AppLink>
-            )}
+                <MoreHorizontal className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-auto">
+                {run.graphId && (
+                  <DropdownMenuItem
+                    render={<AppLink href={paths.graphDetail(run.graphId)} />}
+                  >
+                    {t(($) => $.studio.ux.open_graph)}
+                  </DropdownMenuItem>
+                )}
+                {run.previousRunId && (
+                  <DropdownMenuItem
+                    render={
+                      <AppLink href={paths.graphRun(run.previousRunId)} />
+                    }
+                  >
+                    {t(($) => $.production.previous_run)}
+                  </DropdownMenuItem>
+                )}
+                {archivable && (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    disabled={pending}
+                    onClick={() => act("archive")}
+                  >
+                    {actionLabels.archive}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </header>
-      {pendingGates.map((gate) => (
-        <ApprovalCard
-          key={gate.id}
-          run={run}
-          gate={gate}
-          members={members.data ?? []}
-          repositories={repositories.data?.repositories ?? []}
-          canDecide={
-            pendingForActor.has(gate.id) && canApproveGraphRun(run, actor)
-          }
-          canReplace={canReplaceGraphApprover(run, actor)}
-          pending={pending}
-          reason={reason}
-          onReasonChange={setReason}
-          onDecide={decide}
-          onReplace={(approvalGate, previousApproverId) =>
-            setReplacement({
-              approval: approvalGate,
-              previousApproverId,
-            })
-          }
-        />
-      ))}
+      {controlState === "cancel_requested" && (
+        <p role="status" className="text-body text-muted-foreground">
+          {t(($) => $.run.cancel_pending)}
+        </p>
+      )}
+      {pendingGates.map((gate) => {
+        const mine =
+          pendingForActor.has(gate.id) && canApproveGraphRun(run, actor);
+        const step = nodeName(gate.nodeRunId);
+        return (
+          <ApprovalBanner
+            key={gate.id}
+            title={
+              mine
+                ? t(($) => $.studio.ux.approval_needed, { step })
+                : t(($) => $.studio.ux.approval_waiting, { step })
+            }
+            canDecide={mine}
+            pending={pending}
+            expanded={openGate === gate.id}
+            onToggle={() => setOpenGate(openGate === gate.id ? "" : gate.id)}
+            onApprove={() => decide(gate, "approved")}
+          >
+            {approvalCard(gate)}
+          </ApprovalBanner>
+        );
+      })}
+      {run.state === "blocked" && (
+        <section
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-2.5"
+        >
+          <AlertTriangle className="size-4 shrink-0 text-destructive" />
+          <p className="min-w-0 flex-1 text-body">
+            <span className="font-medium">
+              {t(($) => $.studio.ux.blocked_title, {
+                step: blockedNode
+                  ? blockedNode.label || blockedNode.nodeKey
+                  : "",
+              })}
+            </span>
+            {(run.blockReason || blockedNode?.blockReason) && (
+              <span className="ms-1 text-muted-foreground">
+                {run.blockReason || blockedNode?.blockReason}
+              </span>
+            )}
+          </p>
+          {blockedNode && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => showNode(blockedNode)}
+            >
+              {t(($) => $.studio.ux.open_step)}
+            </Button>
+          )}
+        </section>
+      )}
+      {!actions.length &&
+        !canApproveGraphRun(run, actor) &&
+        !pendingGates.length && (
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.run.no_controls)}
+          </p>
+        )}
       <div className="flex gap-2 xl:hidden">
         <Button
-          variant={narrowPane === "flow" ? "default" : "outline"}
+          variant={narrowPane === "flow" ? "secondary" : "ghost"}
           size="sm"
           onClick={() => setNarrowPane("flow")}
         >
           {t(($) => $.studio.flow)}
         </Button>
         <Button
-          variant={narrowPane === "details" ? "default" : "outline"}
+          variant={narrowPane === "details" ? "secondary" : "ghost"}
           size="sm"
           onClick={() => setNarrowPane("details")}
         >
           {t(($) => $.run.details)}
         </Button>
       </div>
-      {/* The flow is the map and the rail is the record. Both are bounded so the
-          page is one screen whatever the run produced, and each pane scrolls
-          itself; letting a run's output set the page height is what turned this
-          page into ninety screens of stacked cards. */}
-      <div className="grid min-h-0 gap-4 xl:h-[min(760px,78vh)] xl:grid-cols-[minmax(0,1fr)_420px] xl:grid-rows-1">
+      {/* The flow is the map and the rail is the record. Both fill the page
+          and scroll themselves, so a run's output never sets the page height. */}
+      <div className="grid min-h-[480px] flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_440px] xl:grid-rows-1">
         {flowPane}
         {railPane}
       </div>
@@ -1101,7 +1340,7 @@ export function GraphRunPage() {
           {t(($) => $.page.refresh)}
         </Button>
       </PageHeader>
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4">
         <GraphError error={run.error} />
         {run.isPending ? (
           <p>{t(($) => $.page.loading)}</p>

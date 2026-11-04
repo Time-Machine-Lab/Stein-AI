@@ -4,12 +4,27 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import labels from "../locales/en/graphs.json";
 import { GraphRunPage } from "./graph-run-page";
 
-const box = vi.hoisted(() => ({ run: {} as Record<string, unknown> }));
+const box = vi.hoisted(() => ({
+  run: {} as Record<string, unknown>,
+  approve: vi.fn(),
+}));
 
 vi.mock("../i18n", () => ({
   useT: () => ({
-    t: (selector: (value: typeof labels) => string) => selector(labels),
+    t: (
+      selector: (value: typeof labels) => string,
+      options?: Record<string, unknown>,
+    ) => {
+      let text = selector(labels);
+      for (const [key, value] of Object.entries(options ?? {}))
+        text = text.replace(`{{${key}}}`, String(value));
+      return text;
+    },
   }),
+  useTimeAgo: () => () => "just now",
+}));
+vi.mock("@xyflow/react", () => ({
+  Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../navigation", () => ({
   useNavigation: () => ({
@@ -69,7 +84,7 @@ vi.mock("@multica/core/graphs", async (importOriginal) => {
       initialData: { repositories: [] },
     }),
     useControlGraphRun: () => ({ mutate: vi.fn(), isPending: false }),
-    useApproveGraphRun: () => ({ mutate: vi.fn(), isPending: false }),
+    useApproveGraphRun: () => ({ mutate: box.approve, isPending: false }),
     useReplaceGraphApprover: () => ({ mutate: vi.fn(), isPending: false }),
   };
 });
@@ -82,6 +97,7 @@ vi.mock("./graph-result-view", () => ({
   GraphArtifactCards: () => <p>Artifacts</p>,
 }));
 vi.mock("./graph-canvas", () => ({
+  GraphStateLegend: () => <p>Legend</p>,
   GraphCanvas: ({
     onSelect,
     states,
@@ -192,15 +208,22 @@ describe("Graph run page", () => {
     );
   });
 
-  it("leads the record pane with the run result", () => {
+  it("keeps the run result one tab away from the step", () => {
     renderPage();
-    const rail = screen.getByTestId("run-rail");
-    const result = screen.getByTestId("run-result");
-    const detail = screen.getByTestId("node-detail");
-    expect(result.parentElement).toBe(rail);
-    expect(
-      result.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(screen.getByTestId("node-detail")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("tab", { name: labels.studio.ux.tab_output }),
+    );
+    expect(screen.getByTestId("run-result")).toHaveTextContent("Ship it");
+  });
+
+  it("shows how far the run has come", () => {
+    renderPage();
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "1",
+    );
+    expect(screen.getByText("1 / 1 steps")).toBeVisible();
   });
 
   it("opens on the node that produced the result, not the synthetic end node", () => {
@@ -276,19 +299,53 @@ describe("Graph run page", () => {
       ],
     });
     renderPage();
-    const approve = screen.getByRole("button", { name: "Approve candidate" });
-    expect(approve).toBeEnabled();
+    expect(screen.getByText("Your approval is needed: Research")).toBeVisible();
+    const approve = screen.getByRole("button", {
+      name: labels.studio.ux.approve,
+    });
     expect(
       screen
         .getByTestId("run-flow")
         .compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_PRECEDING,
     ).toBeTruthy();
+    fireEvent.click(approve);
+    expect(box.approve.mock.calls[0]![0]).toMatchObject({
+      approvalId: "gate-1",
+      decision: "approved",
+    });
+    // Rejecting needs a reason, so it opens the whole gate first.
+    expect(screen.queryByLabelText("Reason")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: labels.studio.ux.reject }),
+    );
     const reject = screen.getByRole("button", { name: "Reject candidate" });
     expect(reject).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Reason"), {
       target: { value: "Evidence is thin" },
     });
     expect(reject).toBeEnabled();
+  });
+
+  it("says where a blocked run is stuck and opens that step", () => {
+    box.run = makeRun({
+      state: "blocked",
+      nodes: [
+        node("n1", "start", "succeeded"),
+        node("n2", "research", "blocked", { blockReason: "Runtime offline" }),
+        node("n3", "end", "pending"),
+      ],
+    });
+    renderPage();
+    expect(
+      screen.getByText("The run is blocked at Research.", { exact: false }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: labels.studio.ux.open_step }),
+    );
+    expect(screen.getByTestId("graph-flow")).toHaveAttribute(
+      "data-selected",
+      "research",
+    );
   });
 
   it("keeps the reason field out of the header when nothing is being decided", () => {
