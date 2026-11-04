@@ -246,6 +246,20 @@
       "merge_invalid": "The draft in this reply is not a valid workflow, so the canvas is unchanged.",
       "merge_unknown_alias": "This reply referred to a teammate that does not exist ({{alias}}), so the canvas is unchanged. Available teammates: {{available}}.",
       "merge_too_large": "The draft in this reply is over the size limit, so the canvas is unchanged."
+    },
+    "ux": {
+      "group_people": "AI and people",
+      "group_logic": "Logic",
+      "group_tools": "Tools",
+      "mark_added": "New",
+      "mark_changed": "Changed",
+      "node_issues": "{{count}} problems on this step",
+      "insert_step": "Insert a step here",
+      "legend_done": "Done",
+      "legend_running": "Running",
+      "legend_waiting": "Waiting",
+      "legend_failed": "Failed",
+      "legend_idle": "Not started / skipped"
     }
   },
   "production": {

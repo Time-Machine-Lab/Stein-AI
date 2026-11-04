@@ -246,6 +246,20 @@
       "merge_invalid": "这次回复的草稿不合法，画布保持原样。",
       "merge_unknown_alias": "这次回复引用了不存在的成员（{{alias}}），画布保持原样。可用的成员：{{available}}。",
       "merge_too_large": "这次回复的草稿超过了大小上限，画布保持原样。"
+    },
+    "ux": {
+      "group_people": "AI 与人工",
+      "group_logic": "逻辑",
+      "group_tools": "工具",
+      "mark_added": "新增",
+      "mark_changed": "修改",
+      "node_issues": "这一步有 {{count}} 个问题",
+      "insert_step": "在这里插入一步",
+      "legend_done": "完成",
+      "legend_running": "运行中",
+      "legend_waiting": "等待",
+      "legend_failed": "失败",
+      "legend_idle": "未开始 / 跳过"
     }
   },
   "production": {

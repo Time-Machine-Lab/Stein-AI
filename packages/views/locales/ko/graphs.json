@@ -246,6 +246,20 @@
       "merge_invalid": "이 답변의 초안이 올바른 워크플로가 아니라 캔버스를 그대로 두었습니다.",
       "merge_unknown_alias": "이 답변이 없는 멤버({{alias}})를 가리켜 캔버스를 그대로 두었습니다. 사용할 수 있는 멤버: {{available}}.",
       "merge_too_large": "이 답변의 초안이 크기 상한을 넘어 캔버스를 그대로 두었습니다."
+    },
+    "ux": {
+      "group_people": "AI와 사람",
+      "group_logic": "로직",
+      "group_tools": "도구",
+      "mark_added": "추가",
+      "mark_changed": "변경",
+      "node_issues": "이 단계에 문제 {{count}}개",
+      "insert_step": "여기에 단계 삽입",
+      "legend_done": "완료",
+      "legend_running": "실행 중",
+      "legend_waiting": "대기",
+      "legend_failed": "실패",
+      "legend_idle": "시작 전 / 건너뜀"
     }
   },
   "production": {

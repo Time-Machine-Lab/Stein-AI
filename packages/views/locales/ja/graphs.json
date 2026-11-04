@@ -246,6 +246,20 @@
       "merge_invalid": "この返信の下書きは有効なワークフローではないため、キャンバスは変更していません。",
       "merge_unknown_alias": "この返信は存在しないメンバー（{{alias}}）を参照しているため、キャンバスは変更していません。使用できるメンバー：{{available}}。",
       "merge_too_large": "この返信の下書きはサイズ上限を超えているため、キャンバスは変更していません。"
+    },
+    "ux": {
+      "group_people": "AI と人",
+      "group_logic": "ロジック",
+      "group_tools": "ツール",
+      "mark_added": "追加",
+      "mark_changed": "変更",
+      "node_issues": "このステップに {{count}} 件の問題",
+      "insert_step": "ここにステップを挿入",
+      "legend_done": "完了",
+      "legend_running": "実行中",
+      "legend_waiting": "待機",
+      "legend_failed": "失敗",
+      "legend_idle": "未開始 / スキップ"
     }
   },
   "production": {
