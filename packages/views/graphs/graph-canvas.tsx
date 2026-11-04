@@ -53,7 +53,6 @@ import {
 } from "./graph-node-catalog";
 import "@xyflow/react/dist/style.css";
 
-export { useGraphNodeLabels } from "./graph-node-catalog";
 
 export type GraphNodeMark = "added" | "changed";
 

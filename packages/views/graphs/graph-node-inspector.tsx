@@ -23,7 +23,7 @@ import {
   GraphConditionEditor,
 } from "./graph-bindings";
 import { GraphSchemaBuilder } from "./graph-schema-fields";
-import { useGraphNodeLabels } from "./graph-canvas";
+import { useGraphNodeLabels } from "./graph-node-catalog";
 
 export function GraphNodeInspector({
   definition,
