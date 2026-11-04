@@ -309,8 +309,10 @@ function GraphFlowEdge({
                     type="button"
                     aria-label={t(($) => $.studio.ux.insert_step)}
                     className={cn(
-                      "flex size-5 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-opacity hover:border-primary hover:text-primary focus-visible:opacity-100",
-                      selected ? "opacity-100" : "opacity-60 hover:opacity-100",
+                      "flex size-5 items-center justify-center rounded-full border bg-background shadow-sm transition-colors hover:border-primary hover:text-primary",
+                      selected
+                        ? "border-primary text-primary"
+                        : "text-faint-foreground",
                     )}
                   >
                     <Plus className="size-3" />
