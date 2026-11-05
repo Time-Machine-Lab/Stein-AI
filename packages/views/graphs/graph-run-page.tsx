@@ -15,7 +15,6 @@ import {
   canManageGraphRun,
   canReplaceGraphApprover,
   graphControlState,
-  graphNodeTasksOptions,
   graphRunActions,
   graphRunOptions,
   nodeCanRetry,
@@ -31,7 +30,6 @@ import {
   type GraphRun,
   type GraphRunAction,
   type GraphApproval,
-  type GraphNodeDefinition,
   type GraphRepositoryOption,
   type JsonObject,
 } from "@multica/core/graphs";
@@ -70,7 +68,6 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { AppLink, useNavigation } from "../navigation";
 import { PageHeader } from "../layout/page-header";
-import { TranscriptButton } from "../common/task-transcript";
 import { useT, useTimeAgo } from "../i18n";
 import {
   Field,
@@ -82,6 +79,14 @@ import {
 } from "./shared";
 import { GraphCanvas, GraphStateLegend } from "./graph-canvas";
 import { GraphArtifactCards, GraphValueView } from "./graph-result-view";
+import {
+  GraphRunArtifacts,
+  GraphRunEvents,
+  GraphRunInput,
+  GraphRunRaw,
+  GraphRunResult,
+  GraphStepRecord,
+} from "./graph-run-record";
 
 // States worth opening a run page on, most urgent first. A run that is live,
 // stuck, or failed is what the reader came for.
@@ -135,214 +140,6 @@ function focusNodeId(nodes: GraphNodeRun[]): string {
   // so the reader lands on the answer instead of an empty box.
   return (
     (nodes.filter((node) => node.output).at(-1) ?? nodes.at(-1))?.id ?? ""
-  );
-}
-
-function NodeDetail({
-  wsId,
-  node,
-  definition,
-  canManage,
-  pending,
-  reason,
-  onReasonChange,
-  onAction,
-}: {
-  wsId: string;
-  node: GraphNodeRun;
-  definition?: GraphNodeDefinition;
-  canManage: boolean;
-  pending: boolean;
-  reason: string;
-  onReasonChange: (reason: string) => void;
-  onAction: (action: GraphRunAction, nodeRunId?: string) => void;
-}) {
-  const { t } = useT("graphs");
-  const paths = useWorkspacePaths();
-  const tasks = useQuery(graphNodeTasksOptions(wsId, node.issueId ?? ""));
-  return (
-    <section
-      id={`graph-node-${node.id}`}
-      data-testid="node-detail"
-      className="min-w-0 space-y-3 rounded-xl border bg-card p-4"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="min-w-0 flex-1 break-all text-body font-semibold">
-          {node.label || definition?.label || node.nodeKey}
-        </h2>
-        <GraphState state={node.state} />
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted-foreground">
-        {node.issueId && (
-          <AppLink
-            href={paths.issueDetail(node.issueId)}
-            className="underline underline-offset-4"
-          >
-            {t(($) => $.run.node_issue)}
-          </AppLink>
-        )}
-        {["agent", "script"].includes(node.nodeType) && (
-          <span>
-            {t(($) => $.run.attempts, {
-              used: node.attempts.length,
-              max: node.maxAttempts + node.grantedAttempts,
-            })}
-          </span>
-        )}
-        {node.iteration && (
-          <span>
-            {t(($) => $.production.iteration)} {node.iteration}
-          </span>
-        )}
-        {node.selectedPort && (
-          <span className="font-medium text-foreground">
-            {node.selectedPort === "true"
-              ? t(($) => $.production.true_path)
-              : t(($) => $.production.false_path)}
-          </span>
-        )}
-      </div>
-      {node.blockReason && (
-        <p role="status" className="break-words text-body text-destructive">
-          {node.blockReason === "execution_unknown"
-            ? t(($) => $.run.execution_unknown)
-            : node.blockReason}
-        </p>
-      )}
-      {node.output && (
-        <section className="space-y-2">
-          <h3 className="text-caption font-medium text-muted-foreground">
-            {t(($) => $.production.output)}
-          </h3>
-          <GraphValueView
-            value={node.output}
-            schema={definition?.outputSchema}
-          />
-        </section>
-      )}
-      {node.submissions.map((submission, index) => {
-        const result = asSchema(submission.result);
-        return (
-          <section
-            key={String(submission.id ?? index)}
-            className="space-y-3 rounded-lg border p-3"
-          >
-            <div className="flex items-center gap-2">
-              <h3 className="flex-1 text-body font-medium">
-                {t(($) => $.production.results)}
-              </h3>
-              {typeof result.outcome === "string" && (
-                <GraphState state={result.outcome} />
-              )}
-            </div>
-            {!node.output && result.output !== undefined && (
-              <GraphValueView
-                value={result.output}
-                schema={definition?.outputSchema}
-              />
-            )}
-            {result.diagnostics !== undefined && (
-              <GraphValueView value={result.diagnostics} />
-            )}
-            {Array.isArray(result.artifacts) && (
-              <GraphArtifactCards artifacts={result.artifacts.map(asSchema)} />
-            )}
-            <JsonDetails
-              label={t(($) => $.production.raw_details)}
-              value={submission}
-            />
-          </section>
-        );
-      })}
-      {canManage && node.state === "blocked" && (
-        <div className="space-y-3 rounded-lg border p-3">
-          <Field label={t(($) => $.run.reason)}>
-            {(id) => (
-              <Textarea
-                id={id}
-                value={reason}
-                onChange={(event) => onReasonChange(event.target.value)}
-                placeholder={t(($) => $.run.reason_placeholder)}
-                disabled={pending}
-              />
-            )}
-          </Field>
-          <div className="flex flex-wrap gap-2">
-            {nodeCanRetry(node) && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => onAction("retry", node.id)}
-              >
-                {node.nodeType === "http"
-                  ? t(($) => $.production.http_retry)
-                  : t(($) => $.run.retry)}
-              </Button>
-            )}
-            {node.nodeType !== "http" && node.canResolveBlock === true && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => onAction("resolve-block", node.id)}
-              >
-                {t(($) => $.run.resolve_block)}
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-      {node.attempts.map((attempt) => {
-        const task = tasks.data?.find(
-          (candidate) => candidate.id === attempt.taskId,
-        );
-        return (
-          <div
-            key={attempt.taskId}
-            className="space-y-2 rounded-lg bg-muted/40 p-3"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="min-w-0 flex-1 text-caption">
-                {t(($) => $.run.attempts, {
-                  used: attempt.attemptNo,
-                  max: node.maxAttempts + node.grantedAttempts,
-                })}
-              </span>
-              <GraphState state={attempt.state} />
-              {task && (
-                <TranscriptButton
-                  task={task}
-                  agentName={node.label || definition?.label || node.nodeKey}
-                  isLive={
-                    task.status === "running" || task.status === "dispatched"
-                  }
-                  title={t(($) => $.run.view_transcript)}
-                />
-              )}
-            </div>
-            <JsonDetails
-              label={t(($) => $.production.raw_details)}
-              value={{
-                task_id: attempt.taskId,
-                manifest: attempt.manifest,
-                receipt: attempt.receipt,
-              }}
-            />
-          </div>
-        );
-      })}
-      {Object.keys(node.input).length > 0 && (
-        <details className="min-w-0 rounded-lg border p-3">
-          <summary className="cursor-pointer text-body font-medium">
-            {t(($) => $.run.input)}
-          </summary>
-          <div className="mt-3">
-            <GraphValueView value={node.input} />
-          </div>
-        </details>
-      )}
-    </section>
   );
 }
 
@@ -579,9 +376,9 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
   const agents = useQuery(agentListOptions(wsId));
   const actorNames = Object.fromEntries([
     ...(agents.data ?? []).map((agent) => [agent.id, agent.name]),
-    ...(members.data ?? []).map((member) => [
-      member.id,
-      member.name || member.email,
+    ...(members.data ?? []).flatMap((member) => [
+      [member.id, member.name || member.email],
+      [member.user_id, member.name || member.email],
     ]),
   ]) as Record<string, string>;
   const repositories = useQuery(graphStartOptions(wsId, run.rootIssueId));
@@ -818,7 +615,7 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
     </div>
   );
 
-  const tabs: { value: RailTab; label: string; show: boolean }[] = [
+  const tabs: { value: RailTab; label: string; count?: number; show: boolean }[] = [
     { value: "step", label: t(($) => $.studio.ux.tab_step), show: true },
     {
       value: "result",
@@ -828,16 +625,22 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
     {
       value: "artifacts",
       label: t(($) => $.studio.ux.tab_artifacts),
+      count: run.artifacts.length,
       show: run.artifacts.length > 0,
     },
     {
       value: "approvals",
-      label: t(($) => $.studio.ux.tab_approvals),
+      label: t(($) => $.studio.ux.rail_approvals),
+      count: settledGates.length,
       show: settledGates.length > 0,
     },
-    { value: "input", label: t(($) => $.studio.ux.tab_input), show: true },
-    { value: "events", label: t(($) => $.studio.ux.tab_events), show: true },
-    { value: "raw", label: t(($) => $.studio.ux.tab_raw), show: true },
+    { value: "input", label: t(($) => $.studio.ux.rail_input), show: true },
+    {
+      value: "events",
+      label: t(($) => $.studio.ux.tab_events),
+      show: true,
+    },
+    { value: "raw", label: t(($) => $.studio.ux.rail_raw), show: true },
   ];
   const activeTab = tabs.some((tab) => tab.value === railTab && tab.show)
     ? railTab
@@ -859,19 +662,29 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
             {tabs
               .filter((tab) => tab.show)
               .map((tab) => (
-                <TabsTrigger key={tab.value} value={tab.value}>
+                <TabsTrigger
+                  key={tab.value}
+                  value={tab.value}
+                  className="shrink-0 gap-1 px-2"
+                >
                   {tab.label}
+                  {tab.count ? (
+                    <span className="rounded-full bg-muted px-1.5 text-micro tabular-nums text-muted-foreground">
+                      {tab.count}
+                    </span>
+                  ) : null}
                 </TabsTrigger>
               ))}
           </TabsList>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <TabsContent value="step">
             {selectedNode ? (
-              <NodeDetail
+              <GraphStepRecord
                 wsId={wsId}
                 node={selectedNode}
                 definition={selectedDefinition}
+                actorNames={actorNames}
                 canManage={
                   !run.archivedAt &&
                   canManageGraphRun(run, actor) &&
@@ -895,60 +708,25 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
             )}
           </TabsContent>
           <TabsContent value="result">
-            {run.output && (
-              <section data-testid="run-result" className="min-w-0 space-y-3">
-                <GraphValueView
-                  value={run.output}
-                  schema={run.definition?.outputSchema}
-                />
-              </section>
-            )}
+            <GraphRunResult run={run} />
           </TabsContent>
           <TabsContent value="artifacts">
-            <GraphArtifactCards
-              artifacts={run.artifacts}
-              repositories={repositories.data?.repositories}
+            <GraphRunArtifacts
+              run={run}
+              repositories={repositories.data?.repositories ?? []}
             />
           </TabsContent>
           <TabsContent value="approvals" className="space-y-3">
             {settledGates.map(approvalCard)}
           </TabsContent>
           <TabsContent value="input">
-            <GraphValueView
-              value={run.input}
-              schema={run.definition?.inputSchema}
-            />
+            <GraphRunInput run={run} />
           </TabsContent>
           <TabsContent value="events">
-            <ol className="space-y-3">
-              {run.events.map((event, index) => (
-                <li key={String(event.id ?? index)} className="border-l-2 pl-4">
-                  <p className="text-caption text-muted-foreground">
-                    {typeof event.created_at === "string"
-                      ? new Date(event.created_at).toLocaleString()
-                      : ""}
-                  </p>
-                  <p className="mt-1 text-body font-medium">
-                    {String(event.type ?? event.event_type ?? event.kind ?? "")}
-                  </p>
-                  <GraphValueView
-                    value={event.payload ?? event.data ?? event.detail}
-                  />
-                </li>
-              ))}
-            </ol>
+            <GraphRunEvents run={run} actorNames={actorNames} />
           </TabsContent>
           <TabsContent value="raw">
-            <JsonDetails
-              label={t(($) => $.production.raw_details)}
-              open
-              value={{
-                id: run.id,
-                revision: run.revision,
-                input_hash: run.inputHash,
-                version_id: run.versionId,
-              }}
-            />
+            <GraphRunRaw run={run} />
           </TabsContent>
         </div>
       </Tabs>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  graphArtifactProducer,
   graphChangeMarks,
+  graphEventNode,
   graphRunDurationMs,
   graphRunProgress,
   groupLatestRuns,
@@ -204,6 +206,33 @@ describe("graphRunDurationMs", () => {
     expect(
       graphRunDurationMs({ state: "active", createdAt: "", updatedAt: "" }),
     ).toBeNull();
+  });
+});
+
+describe("graphEventNode", () => {
+  const research = {
+    ...nodeRun("research", "agent", "succeeded"),
+    id: "node-run-1",
+    attempts: [
+      {
+        taskId: "task-1",
+        attemptNo: 1,
+        generation: 0,
+        state: "succeeded",
+        manifest: {},
+      },
+    ],
+  };
+  const run = { nodes: [research, nodeRun("review", "approval", "pending")] };
+  it("resolves task ids, scoped keys and node run ids", () => {
+    expect(graphEventNode(run, "task-1")?.nodeKey).toBe("research");
+    expect(graphEventNode(run, "root/review")?.nodeKey).toBe("review");
+    expect(graphEventNode(run, "node-run-1")?.nodeKey).toBe("research");
+    expect(graphArtifactProducer(run, "task-1")?.nodeKey).toBe("research");
+  });
+  it("ignores messages that are not references", () => {
+    expect(graphEventNode(run, "user_cancelled")).toBeUndefined();
+    expect(graphEventNode(run, undefined)).toBeUndefined();
   });
 });
 

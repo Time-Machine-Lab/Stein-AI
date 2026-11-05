@@ -100,6 +100,8 @@ vi.mock("./graph-result-view", () => ({
     <pre data-testid="value">{JSON.stringify(value)}</pre>
   ),
   GraphArtifactCards: () => <p>Artifacts</p>,
+  CopyValueButton: () => <button type="button">Copy</button>,
+  graphArtifactLink: () => undefined,
 }));
 vi.mock("./graph-canvas", () => ({
   GraphStateLegend: () => <p>Legend</p>,

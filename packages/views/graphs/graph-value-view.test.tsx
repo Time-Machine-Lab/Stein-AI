@@ -44,7 +44,7 @@ describe("GraphValueView", () => {
         }}
       />,
     );
-    const terms = [...container.querySelectorAll("dt")].map(
+    const terms = [...container.querySelectorAll("dt, h4")].map(
       (node) => node.textContent,
     );
     expect(terms).toEqual(["conclusion", "sources", "open gaps"]);

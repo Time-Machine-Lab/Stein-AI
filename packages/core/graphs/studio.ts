@@ -174,6 +174,49 @@ export function graphRunDurationMs(
   return Math.max(0, end - start);
 }
 
+/**
+ * The step a run event is about. Events carry a bare reference in `message`:
+ * a task id (attempt.created, node.submitted), a `<scope>/<nodeKey>` pair
+ * (node.accepted, approval.requested), or a node run id. Anything else is not
+ * a reference and returns undefined.
+ */
+export function graphEventNode(
+  run: Pick<GraphRun, "nodes">,
+  message: unknown,
+): GraphNodeRun | undefined {
+  if (typeof message !== "string" || !message) return undefined;
+  const nodes = run.nodes ?? [];
+  const slash = message.indexOf("/");
+  if (slash > 0) {
+    const scope = message.slice(0, slash);
+    const key = message.slice(slash + 1);
+    return (
+      nodes.find((node) => node.scopeId === scope && node.nodeKey === key) ??
+      nodes.find((node) => node.nodeKey === key)
+    );
+  }
+  return nodes.find(
+    (node) =>
+      node.id === message ||
+      node.attempts.some((attempt) => attempt.taskId === message) ||
+      node.submissions.some(
+        (submission) =>
+          submission.id === message || submission.task_id === message,
+      ),
+  );
+}
+
+/** The step whose attempt produced an artifact, from its producer task. */
+export function graphArtifactProducer(
+  run: Pick<GraphRun, "nodes">,
+  taskId: unknown,
+): GraphNodeRun | undefined {
+  if (typeof taskId !== "string" || !taskId) return undefined;
+  return (run.nodes ?? []).find((node) =>
+    node.attempts.some((attempt) => attempt.taskId === taskId),
+  );
+}
+
 /** Node keys an AI turn touched, for marking them on the canvas. */
 export function graphChangeMarks(
   added: string[],
