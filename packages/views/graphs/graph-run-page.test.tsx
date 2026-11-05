@@ -63,6 +63,11 @@ vi.mock("@multica/core/workspace/queries", () => ({
     queryFn: async () => [],
     initialData: [],
   }),
+  agentListOptions: () => ({
+    queryKey: ["agents"],
+    queryFn: async () => [],
+    initialData: [],
+  }),
 }));
 vi.mock("@multica/core/graphs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/graphs")>();

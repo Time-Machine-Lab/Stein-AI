@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   graphChangeMarks,
+  graphRunDurationMs,
   graphRunProgress,
   groupLatestRuns,
   insertGraphNodeOnEdge,
@@ -173,6 +174,36 @@ describe("groupLatestRuns", () => {
     expect(grouped.get("g1")?.map((item) => item.id)).toEqual(["2", "3"]);
     expect(grouped.get("g2")?.map((item) => item.id)).toEqual(["4"]);
     expect(grouped.size).toBe(2);
+  });
+});
+
+describe("graphRunDurationMs", () => {
+  it("measures to the finish, the last update, or now", () => {
+    const createdAt = "2026-01-01T00:00:00Z";
+    expect(
+      graphRunDurationMs({
+        state: "succeeded",
+        createdAt,
+        updatedAt: "2026-01-01T00:09:00Z",
+        finishedAt: "2026-01-01T00:05:00Z",
+      }),
+    ).toBe(300_000);
+    expect(
+      graphRunDurationMs({
+        state: "failed",
+        createdAt,
+        updatedAt: "2026-01-01T00:02:00Z",
+      }),
+    ).toBe(120_000);
+    expect(
+      graphRunDurationMs(
+        { state: "active", createdAt, updatedAt: createdAt },
+        Date.parse("2026-01-01T00:01:00Z"),
+      ),
+    ).toBe(60_000);
+    expect(
+      graphRunDurationMs({ state: "active", createdAt: "", updatedAt: "" }),
+    ).toBeNull();
   });
 });
 

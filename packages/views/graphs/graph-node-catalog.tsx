@@ -71,32 +71,37 @@ export function graphNodeCategory(type: string): GraphNodeCategory {
  */
 export const GRAPH_CATEGORY_STYLES: Record<
   GraphNodeCategory,
-  { bar: string; icon: string; dot: string }
+  { bar: string; icon: string; dot: string; text: string }
 > = {
   agent: {
     bar: "bg-graph-agent",
-    icon: "bg-graph-agent/12 text-graph-agent",
+    icon: "bg-graph-agent/12 text-graph-agent ring-1 ring-inset ring-graph-agent/20",
     dot: "bg-graph-agent",
+    text: "text-graph-agent",
   },
   human: {
     bar: "bg-graph-human",
-    icon: "bg-graph-human/15 text-graph-human",
+    icon: "bg-graph-human/15 text-graph-human ring-1 ring-inset ring-graph-human/25",
     dot: "bg-graph-human",
+    text: "text-graph-human",
   },
   logic: {
     bar: "bg-graph-logic",
-    icon: "bg-graph-logic/12 text-graph-logic",
+    icon: "bg-graph-logic/12 text-graph-logic ring-1 ring-inset ring-graph-logic/20",
     dot: "bg-graph-logic",
+    text: "text-graph-logic",
   },
   tool: {
     bar: "bg-graph-tool",
-    icon: "bg-graph-tool/12 text-graph-tool",
+    icon: "bg-graph-tool/12 text-graph-tool ring-1 ring-inset ring-graph-tool/20",
     dot: "bg-graph-tool",
+    text: "text-graph-tool",
   },
   edge: {
     bar: "bg-muted-foreground/40",
-    icon: "bg-muted text-muted-foreground",
+    icon: "bg-muted text-muted-foreground ring-1 ring-inset ring-border",
     dot: "bg-muted-foreground/40",
+    text: "text-muted-foreground",
   },
 };
 

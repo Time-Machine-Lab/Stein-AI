@@ -152,6 +152,28 @@ export function groupLatestRuns(
   return grouped;
 }
 
+const TERMINAL = new Set(["succeeded", "failed", "rejected", "cancelled"]);
+
+/**
+ * How long a run has taken: to its finish, or to `now` while it is live. A
+ * terminal run without `finishedAt` falls back to its last update, the same
+ * rule the server's duration statistics use.
+ */
+export function graphRunDurationMs(
+  run: Pick<GraphRun, "state" | "createdAt" | "updatedAt" | "finishedAt">,
+  now = Date.now(),
+): number | null {
+  const start = Date.parse(run.createdAt || "");
+  if (Number.isNaN(start)) return null;
+  const end = run.finishedAt
+    ? Date.parse(run.finishedAt)
+    : TERMINAL.has(run.state)
+      ? Date.parse(run.updatedAt || "")
+      : now;
+  if (Number.isNaN(end)) return null;
+  return Math.max(0, end - start);
+}
+
 /** Node keys an AI turn touched, for marking them on the canvas. */
 export function graphChangeMarks(
   added: string[],

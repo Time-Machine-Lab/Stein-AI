@@ -313,7 +313,11 @@ function GraphWorkspace({
         className={tab === "runs" ? "min-h-0 flex-1 overflow-y-auto" : "hidden"}
       >
         <div className="mx-auto w-full max-w-4xl px-5 py-6">
-          <GraphRunList wsId={wsId} graphId={graph.id} />
+          <GraphRunList
+            wsId={wsId}
+            graphId={graph.id}
+            onRun={graph.archivedAt ? undefined : () => setRunOpen(true)}
+          />
         </div>
       </TabsContent>
       <TabsContent

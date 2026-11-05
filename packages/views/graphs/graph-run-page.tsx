@@ -38,7 +38,10 @@ import {
 import type { MemberWithUser } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { memberListOptions } from "@multica/core/workspace/queries";
+import {
+  agentListOptions,
+  memberListOptions,
+} from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { NativeSelect } from "@multica/ui/components/ui/native-select";
@@ -573,6 +576,14 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
   const paths = useWorkspacePaths();
   const timeAgo = useTimeAgo();
   const members = useQuery(memberListOptions(wsId));
+  const agents = useQuery(agentListOptions(wsId));
+  const actorNames = Object.fromEntries([
+    ...(agents.data ?? []).map((agent) => [agent.id, agent.name]),
+    ...(members.data ?? []).map((member) => [
+      member.id,
+      member.name || member.email,
+    ]),
+  ]) as Record<string, string>;
   const repositories = useQuery(graphStartOptions(wsId, run.rootIssueId));
   const control = useControlGraphRun(wsId);
   const approval = useApproveGraphRun(wsId);
@@ -765,6 +776,7 @@ function RunDetail({ wsId, run }: { wsId: string; run: GraphRun }) {
             definition={visibleDefinition}
             disabled
             overview
+            actorNames={actorNames}
             selectedKey={selectedNode?.nodeKey}
             states={Object.fromEntries(
               visibleNodes.map((node) => [node.nodeKey, node.state]),

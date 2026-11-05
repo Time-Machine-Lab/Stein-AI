@@ -110,6 +110,17 @@ export function GraphStudio({
   const selectedKey = drawer.kind === "node" ? drawer.key : undefined;
   const selected = scope.nodes.find((node) => node.nodeKey === selectedKey);
   const atRoot = scopePath.length === 0;
+  const actorNames = useMemo(
+    () =>
+      Object.fromEntries([
+        ...(agents.data ?? []).map((agent) => [agent.id, agent.name]),
+        ...(members.data ?? []).map((member) => [
+          member.id,
+          member.name || member.email,
+        ]),
+      ]) as Record<string, string>,
+    [agents.data, members.data],
+  );
   const actors = useMemo(
     () => ({
       agents: (agents.data ?? []).filter((agent) => !agent.archived_at),
@@ -460,6 +471,7 @@ export function GraphStudio({
         onChange={editScope}
         onInsertOnEdge={insertOnEdge}
         fitOnOpen
+        actorNames={actorNames}
         selectedKey={selectedKey}
         onSelect={select}
         disabled={disabled}
