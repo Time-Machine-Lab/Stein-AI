@@ -7,3 +7,4 @@ export * from "./mutations";
 export * from "./draft-store";
 export * from "./input-schema";
 export * from "./authoring-protocol";
+export * from "./studio";

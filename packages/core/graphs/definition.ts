@@ -560,7 +560,7 @@ export function layoutGraph(definition: GraphDefinition): GraphDefinition {
       const depth = depths.get(node.nodeKey) ?? index,
         row = rowCounts.get(depth) ?? 0;
       rowCounts.set(depth, row + 1);
-      return [node.nodeKey, { x: depth * 300, y: row * 160 }];
+      return [node.nodeKey, { x: depth * 340, y: row * 180 }];
     }),
   );
   return { ...definition, layout: { nodes } };

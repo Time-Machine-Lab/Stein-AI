@@ -511,6 +511,10 @@ export const GraphRunSchema = z
     approval: GraphApprovalSchema.nullish(),
     block_reason: reason,
     archived_at: reason,
+    root_snapshot: z
+      .object({ title: z.string().catch("") })
+      .nullish()
+      .catch(null),
     created_at: timestamp,
     updated_at: timestamp,
   })
@@ -518,6 +522,7 @@ export const GraphRunSchema = z
     id: value.id,
     workspaceId: value.workspace_id,
     rootIssueId: value.root_issue_id,
+    rootTitle: value.root_snapshot?.title || undefined,
     versionId: value.version_id,
     initiatorId: value.initiator_id,
     state: value.state,

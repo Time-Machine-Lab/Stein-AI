@@ -193,6 +193,19 @@ function stored(storage: StorageAdapter, draftKey: string) {
 }
 
 describe("Graph draft conversation binding", () => {
+  it("moves a newly chosen executor to the head of the scope", () => {
+    const store = createGraphDraftStore(memoryStorage());
+    store.getState().open(key, definition, 1);
+    store.getState().bindAi(key, ai);
+    store
+      .getState()
+      .updateAi(key, { executorId: "agent-2", approverId: "member-2" });
+    expect(store.getState().documents[key]?.ai).toMatchObject({
+      executorId: "agent-2",
+      scopeIds: ["agent-2", "agent-1"],
+      approverId: "member-2",
+    });
+  });
   it("returns to the same conversation after a reload, with the reply it merged", () => {
     const storage = memoryStorage(),
       first = createGraphDraftStore(storage);

@@ -1,102 +1,181 @@
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, GitBranch, Plus, Search } from "lucide-react";
+import { GitBranch, Play, Plus, Search } from "lucide-react";
 import {
-  graphControlState,
-  graphSearchOptions,
   graphRunSearchOptions,
+  graphSearchOptions,
+  groupLatestRuns,
+  type GraphRecord,
+  type GraphRun,
 } from "@multica/core/graphs";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
-import { NativeSelect } from "@multica/ui/components/ui/native-select";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@multica/ui/components/ui/tabs";
+import { cn } from "@multica/ui/lib/utils";
 import { AppLink, useNavigation } from "../navigation";
 import { CollectionPageHeader } from "../layout/collection-page";
-import { useT } from "../i18n";
-import { GraphError, GraphState, useGraphStateLabels } from "./shared";
+import { useT, useTimeAgo } from "../i18n";
+import { GraphError, useGraphStateLabels } from "./shared";
+import { GraphNodeIcon } from "./graph-node-catalog";
+import {
+  GraphPager,
+  GraphRunList,
+  GraphRunStateDot,
+  RUN_STATE_DOT,
+} from "./graph-run-list";
 
-function Pager({
-  next,
-  cursors,
-  setCursors,
-}: {
-  next?: string;
-  cursors: string[];
-  setCursors: (value: string[]) => void;
-}) {
-  const { t } = useT("graphs");
-  if (!next && !cursors.length) return null;
+/** Up to five step icons: a graph's shape at a glance. */
+function GraphShape({ graph }: { graph: GraphRecord }) {
+  const steps = (graph.definition?.nodes ?? []).filter(
+    (node) => !["start", "end"].includes(node.type),
+  );
   return (
-    <div className="flex justify-end gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!cursors.length}
-        onClick={() => setCursors(cursors.slice(0, -1))}
-      >
-        {t(($) => $.production.previous)}
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!next}
-        onClick={() => {
-          if (next) setCursors([...cursors, next]);
-        }}
-      >
-        {t(($) => $.production.next)}
-      </Button>
-    </div>
+    <span className="flex items-center gap-0.5" aria-hidden="true">
+      {steps.slice(0, 5).map((node) => (
+        <GraphNodeIcon key={node.nodeKey} type={node.type} className="size-5" />
+      ))}
+      {steps.length > 5 && (
+        <span className="ps-1 text-micro text-muted-foreground">
+          +{steps.length - 5}
+        </span>
+      )}
+    </span>
   );
 }
+
+/** The last runs as bars, oldest first, coloured by outcome. */
+function RecentRuns({ runs }: { runs: GraphRun[] }) {
+  const stateLabels = useGraphStateLabels();
+  return (
+    <span className="flex h-5 items-end gap-0.5">
+      {[...runs].reverse().map((run) => (
+        <span
+          key={run.id}
+          title={stateLabels[run.state] ?? run.state}
+          className={cn(
+            "w-1.5 rounded-sm",
+            run.state === "succeeded" ? "h-5" : "h-3",
+            RUN_STATE_DOT[run.state] ?? "bg-muted-foreground/40",
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+
+function GraphRow({
+  graph,
+  runs,
+  issueId,
+}: {
+  graph: GraphRecord;
+  runs: GraphRun[];
+  issueId: string | null;
+}) {
+  const { t } = useT("graphs");
+  const paths = useWorkspacePaths();
+  const timeAgo = useTimeAgo();
+  const stateLabels = useGraphStateLabels();
+  const issue = issueId ? `issue=${encodeURIComponent(issueId)}` : "";
+  const href = `${paths.graphDetail(graph.id)}${issue ? `?${issue}` : ""}`;
+  const runHref = `${paths.graphDetail(graph.id)}?${issue || "run=1"}`;
+  const latest = runs[0];
+  const version = graph.versions?.at(-1)?.version;
+  const steps = (graph.definition?.nodes ?? []).filter(
+    (node) => !["start", "end"].includes(node.type),
+  ).length;
+  return (
+    <li className="group relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 border-b px-4 py-3 last:border-b-0 hover:bg-accent/40 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.4fr)_5rem_auto]">
+      <div className="min-w-0">
+        <AppLink
+          href={href}
+          className="block truncate text-body font-medium after:absolute after:inset-0"
+        >
+          {graph.name || t(($) => $.page.title)}
+        </AppLink>
+        <p className="mt-0.5 truncate text-caption text-muted-foreground">
+          {t(($) => $.studio.step_count, { count: steps })}
+          {graph.archivedAt
+            ? ` · ${t(($) => $.page.archived)}`
+            : version
+              ? ` · ${t(($) => $.studio.ux.published_version, { version })}`
+              : ""}
+        </p>
+      </div>
+      <div className="hidden md:block">
+        <GraphShape graph={graph} />
+      </div>
+      <div className="hidden min-w-0 items-center gap-2 text-caption md:flex">
+        {latest ? (
+          <>
+            <GraphRunStateDot state={latest.state} />
+            <span className="truncate">
+              {stateLabels[latest.state] ?? latest.state}
+              {latest.createdAt && (
+                <span className="text-muted-foreground">
+                  {" · "}
+                  {timeAgo(latest.createdAt)}
+                </span>
+              )}
+            </span>
+            <span className="ms-auto">
+              <RecentRuns runs={runs} />
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">
+            {t(($) => $.studio.ux.never_run)}
+          </span>
+        )}
+      </div>
+      <span className="hidden text-caption text-muted-foreground md:block">
+        {graph.updatedAt ? timeAgo(graph.updatedAt) : ""}
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        className="relative z-10"
+        disabled={Boolean(graph.archivedAt)}
+        render={<AppLink href={runHref} />}
+        nativeButton={false}
+      >
+        <Play className="size-3.5" />
+        {t(($) => $.studio.ux.run_once)}
+      </Button>
+    </li>
+  );
+}
+
 export function GraphsPage() {
   const { t } = useT("graphs"),
     wsId = useWorkspaceId(),
     paths = useWorkspacePaths(),
     navigation = useNavigation();
-  const [search, setSearch] = useState(""),
-    [state, setState] = useState("");
-  const [graphCursors, setGraphCursors] = useState<string[]>([]),
-    [runCursors, setRunCursors] = useState<string[]>([]);
-  const q = useDeferredValue(search),
-    stateLabels = useGraphStateLabels();
+  const [tab, setTab] = useState("graphs");
+  const [search, setSearch] = useState("");
+  const [cursors, setCursors] = useState<string[]>([]);
+  const q = useDeferredValue(search);
+  const issueId = navigation.searchParams.get("issue");
   const graphs = useQuery(
-    graphSearchOptions(wsId, { q, cursor: graphCursors.at(-1), limit: 12 }),
+    graphSearchOptions(wsId, { q, cursor: cursors.at(-1), limit: 20 }),
   );
-  const runs = useQuery(
-    graphRunSearchOptions(wsId, {
-      q,
-      state,
-      cursor: runCursors.at(-1),
-      limit: 20,
-    }),
+  // One read of recent runs, grouped here, instead of a request per row.
+  const recent = useQuery(graphRunSearchOptions(wsId, { limit: 100 }));
+  const byGraph = useMemo(
+    () => groupLatestRuns(recent.data?.items ?? [], 7),
+    [recent.data?.items],
   );
-  const stats = runs.data?.stats,
-    issueId = navigation.searchParams.get("issue");
-  const metrics = stats
-    ? [
-        [t(($) => $.production.total), stats.total.toLocaleString()],
-        [t(($) => $.production.active), stats.active.toLocaleString()],
-        [t(($) => $.production.blocked), stats.blocked.toLocaleString()],
-        [t(($) => $.production.failed), stats.failed.toLocaleString()],
-        [
-          t(($) => $.production.duration),
-          `${(stats.totalDurationMs / 60000).toLocaleString(undefined, { maximumFractionDigits: 1 })} min`,
-        ],
-        [
-          t(($) => $.production.cost),
-          new Intl.NumberFormat(undefined, {
-            style: "currency",
-            currency: "USD",
-            maximumFractionDigits: 3,
-          }).format(stats.totalCostUsd),
-        ],
-        [t(($) => $.production.tokens), stats.totalTokens.toLocaleString()],
-      ]
-    : [];
+  const waiting = recent.data?.stats?.waitingApproval ?? 0;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <CollectionPageHeader
@@ -110,177 +189,99 @@ export function GraphsPage() {
           </Button>
         }
       />
-      <div className="flex-1 space-y-8 overflow-auto px-5 py-6 sm:px-8">
-        <GraphError error={graphs.error ?? runs.error} />
-        <div className="flex flex-wrap gap-3">
-          <div className="relative min-w-48 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              aria-label={t(($) => $.production.search)}
-              placeholder={t(($) => $.production.search)}
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setGraphCursors([]);
-                setRunCursors([]);
-              }}
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(String(value))}
+        className="min-h-0 flex-1 gap-0"
+      >
+        <div className="border-b px-5 sm:px-8">
+          <TabsList variant="line">
+            <TabsTrigger value="graphs">
+              {t(($) => $.studio.ux.flows_tab)}
+              {graphs.data && (
+                <span className="tabular-nums text-muted-foreground">
+                  {graphs.data.total}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="runs">
+              {t(($) => $.studio.ux.all_runs_tab)}
+              {waiting > 0 && (
+                <span className="rounded-full bg-warning/15 px-1.5 text-micro font-medium text-warning">
+                  {t(($) => $.studio.ux.waiting_count, { count: waiting })}
+                </span>
+              )}
+            </TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent value="graphs" className="min-h-0 flex-1 overflow-auto">
+          <div className="mx-auto w-full max-w-6xl space-y-4 px-5 py-6 sm:px-8">
+            <GraphError error={graphs.error} />
+            <div className="relative max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                aria-label={t(($) => $.production.search)}
+                placeholder={t(($) => $.production.search)}
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setCursors([]);
+                }}
+              />
+            </div>
+            {graphs.isPending ? (
+              <p className="text-body text-muted-foreground">
+                {t(($) => $.page.loading)}
+              </p>
+            ) : !graphs.data?.items.length ? (
+              <div className="rounded-xl border border-dashed p-10 text-center">
+                <p className="text-body text-muted-foreground">
+                  {t(($) => $.page.empty_templates)}
+                </p>
+                <Button
+                  className="mt-4"
+                  size="sm"
+                  onClick={() => navigation.push(paths.graphNew())}
+                >
+                  <Plus className="size-4" />
+                  {t(($) => $.page.new)}
+                </Button>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border bg-card">
+                <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.4fr)_5rem_auto] gap-x-4 border-b bg-muted/30 px-4 py-2 text-caption text-muted-foreground md:grid">
+                  <span>{t(($) => $.studio.ux.col_name)}</span>
+                  <span>{t(($) => $.studio.ux.col_shape)}</span>
+                  <span>{t(($) => $.studio.ux.col_last_run)}</span>
+                  <span>{t(($) => $.studio.ux.col_updated)}</span>
+                  <span className="w-[4.5rem]" />
+                </div>
+                <ul>
+                  {graphs.data.items.map((graph) => (
+                    <GraphRow
+                      key={graph.id}
+                      graph={graph}
+                      runs={byGraph.get(graph.id) ?? []}
+                      issueId={issueId}
+                    />
+                  ))}
+                </ul>
+              </div>
+            )}
+            <GraphPager
+              next={graphs.data?.nextCursor}
+              cursors={cursors}
+              setCursors={setCursors}
             />
           </div>
-          <NativeSelect
-            aria-label={t(($) => $.production.all_states)}
-            value={state}
-            onChange={(event) => {
-              setState(event.target.value);
-              setRunCursors([]);
-            }}
-          >
-            <option value="">{t(($) => $.production.all_states)}</option>
-            {[
-              "active",
-              "waiting_approval",
-              "blocked",
-              "succeeded",
-              "failed",
-              "rejected",
-              "cancelled",
-            ].map((value) => (
-              <option key={value} value={value}>
-                {stateLabels[value] ?? value}
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
-        {metrics.length > 0 && (
-          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
-            {metrics.map(([label, value]) => (
-              <div key={label} className="rounded-xl border bg-card p-4">
-                <dt className="truncate text-caption text-muted-foreground">
-                  {label}
-                </dt>
-                <dd className="mt-2 truncate text-title font-semibold tabular-nums">
-                  {value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        {Boolean(stats?.unpricedTasks) && (
-          <p className="text-caption text-muted-foreground">
-            {t(($) => $.production.unpriced_tasks, {
-              count: stats!.unpricedTasks,
-            })}
-          </p>
-        )}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-title font-semibold">
-              {t(($) => $.page.templates)}
-            </h2>
-            <span className="text-caption text-muted-foreground">
-              {graphs.data?.total ?? 0}
-            </span>
+        </TabsContent>
+        <TabsContent value="runs" className="min-h-0 flex-1 overflow-auto">
+          <div className="mx-auto w-full max-w-6xl px-5 py-6 sm:px-8">
+            <GraphRunList wsId={wsId} />
           </div>
-          {graphs.isPending ? (
-            <p>{t(($) => $.page.loading)}</p>
-          ) : !graphs.data?.items.length ? (
-            <div className="rounded-xl border border-dashed p-8 text-center text-body text-muted-foreground">
-              {t(($) => $.page.empty_templates)}
-            </div>
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {graphs.data.items.map((graph) => (
-                <AppLink
-                  key={graph.id}
-                  href={`${paths.graphDetail(graph.id)}${issueId ? `?issue=${encodeURIComponent(issueId)}` : ""}`}
-                  className="group min-w-0 space-y-4 rounded-xl border bg-card p-5 transition-colors hover:border-primary/30 hover:bg-accent/30"
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="rounded-lg bg-primary/10 p-2 text-primary">
-                      <GitBranch className="size-4" />
-                    </span>
-                    <h3 className="min-w-0 flex-1 truncate text-body font-semibold">
-                      {graph.name}
-                    </h3>
-                    <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-                  </div>
-                  <div className="flex flex-wrap gap-2 text-caption text-muted-foreground">
-                    <span>
-                      {t(($) => $.page.revision, { revision: graph.revision })}
-                    </span>
-                    {graph.archivedAt && (
-                      <span>{t(($) => $.page.archived)}</span>
-                    )}
-                    <span className="ml-auto">
-                      {graph.updatedAt
-                        ? new Date(graph.updatedAt).toLocaleDateString()
-                        : ""}
-                    </span>
-                  </div>
-                </AppLink>
-              ))}
-            </div>
-          )}
-          <Pager
-            next={graphs.data?.nextCursor}
-            cursors={graphCursors}
-            setCursors={setGraphCursors}
-          />
-        </section>
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-title font-semibold">
-              {t(($) => $.page.runs)}
-            </h2>
-            <span className="text-caption text-muted-foreground">
-              {runs.data?.total ?? 0}
-            </span>
-          </div>
-          {runs.isPending ? (
-            <p>{t(($) => $.page.loading)}</p>
-          ) : !runs.data?.items.length ? (
-            <p className="text-body text-muted-foreground">
-              {t(($) => $.page.empty_runs)}
-            </p>
-          ) : (
-            <div className="overflow-hidden rounded-xl border">
-              {runs.data.items.map((run) => {
-                const controlState = graphControlState(run);
-                return (
-                  <AppLink
-                    key={run.id}
-                    href={paths.graphRun(run.id)}
-                    className="flex flex-wrap items-center gap-3 border-b p-4 last:border-b-0 hover:bg-accent/40"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-body font-medium">
-                        {run.graphName ||
-                          graphs.data?.items.find(
-                            (graph) => graph.id === run.graphId,
-                          )?.name ||
-                          run.id.slice(0, 8)}
-                      </p>
-                      <p className="mt-1 text-caption text-muted-foreground">
-                        {run.createdAt
-                          ? new Date(run.createdAt).toLocaleString()
-                          : ""}
-                      </p>
-                    </div>
-                    <GraphState state={run.state} />
-                    {controlState && <GraphState state={controlState} />}
-                    <ArrowRight className="size-4 text-muted-foreground" />
-                  </AppLink>
-                );
-              })}
-            </div>
-          )}
-          <Pager
-            next={runs.data?.nextCursor}
-            cursors={runCursors}
-            setCursors={setRunCursors}
-          />
-        </section>
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

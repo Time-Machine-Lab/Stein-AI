@@ -1,6 +1,16 @@
 "use client";
 import { useState } from "react";
-import { ChevronRight, FileText, GitCommitHorizontal } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  GitCommitHorizontal,
+} from "lucide-react";
+import { copyText } from "@multica/ui/lib/clipboard";
+import { cn } from "@multica/ui/lib/utils";
 import {
   asSchema,
   type JsonObject,
@@ -83,6 +93,89 @@ function fieldLabel(
   if (typeof field.description === "string" && field.description)
     return field.description;
   return labels[key] ?? key.replaceAll("_", " ");
+}
+
+/** A string is short enough to sit in a key–value row beside its label. */
+function isShortScalar(value: unknown): boolean {
+  if (typeof value === "number" || typeof value === "boolean") return true;
+  return (
+    typeof value === "string" &&
+    value.length <= 60 &&
+    !value.includes("\n") &&
+    !parseGraphUrl(value)
+  );
+}
+
+/** Copies a value: text as itself, anything else as indented JSON. */
+export function CopyValueButton({
+  value,
+  className,
+}: {
+  value: unknown;
+  className?: string;
+}) {
+  const { t } = useT("graphs");
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={t(($) => $.studio.ux.copy)}
+      title={t(($) => $.studio.ux.copy)}
+      className={cn(
+        "inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+        className,
+      )}
+      onClick={async () => {
+        const text =
+          typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        if (await copyText(text)) {
+          setDone(true);
+          toast.success(t(($) => $.editor.copied));
+          window.setTimeout(() => setDone(false), 1500);
+        }
+      }}
+    >
+      {done ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </button>
+  );
+}
+
+/**
+ * Agent prose, rendered as markdown. Anything longer than a few lines opens
+ * folded with a fade, so one long field cannot push everything else off the
+ * pane; the reader unfolds what they came for.
+ */
+function LongText({ text }: { text: string }) {
+  const { t } = useT("graphs");
+  const long = text.length > 320 || text.split("\n").length > 6;
+  const [open, setOpen] = useState(!long);
+  return (
+    <div className="min-w-0">
+      <div
+        className={cn(
+          "min-w-0 overflow-hidden",
+          !open && "max-h-40 [mask-image:linear-gradient(to_bottom,black_55%,transparent)]",
+        )}
+      >
+        <ReadonlyContent
+          content={text}
+          className="min-w-0 break-words text-body leading-7"
+        />
+      </div>
+      {long && (
+        <button
+          type="button"
+          className="mt-1 inline-flex items-center gap-1 text-caption font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => setOpen((current) => !current)}
+        >
+          <ChevronDown
+            className={cn("size-3.5 transition-transform", open && "rotate-180")}
+          />
+          {open ? t(($) => $.value.collapse) : t(($) => $.studio.ux.show_all)}
+        </button>
+      )}
+    </div>
+  );
 }
 
 function Disclosure({
@@ -220,9 +313,12 @@ function ValueList({
       {columns ? (
         <ValueTable items={shown} columns={columns} schema={schema} />
       ) : shown.every((item) => !isPlainObject(item) && !Array.isArray(item)) ? (
-        <ul className="min-w-0 space-y-1">
+        <ul className="min-w-0 space-y-2">
           {shown.map((item, index) => (
-            <li key={index} className="min-w-0">
+            <li
+              key={index}
+              className="relative min-w-0 ps-4 before:absolute before:left-0 before:top-[0.7em] before:size-1.5 before:rounded-full before:bg-muted-foreground/50"
+            >
               <GraphValueView
                 value={item}
                 schema={asSchema(schema.items)}
@@ -270,12 +366,7 @@ export function GraphValueView({
           {value}
         </a>
       );
-    return (
-      <ReadonlyContent
-        content={value}
-        className="min-w-0 break-words text-body"
-      />
-    );
+    return <LongText text={value} />;
   }
   if (typeof value === "number" || typeof value === "boolean")
     return (
@@ -297,22 +388,52 @@ export function GraphValueView({
   const entries = orderEntries(Object.entries(asSchema(value)));
   if (!entries.length)
     return <span className="text-caption text-muted-foreground">—</span>;
+  const properties = asSchema(schema.properties);
+  // Short facts read as a compact key–value block; prose and collections get
+  // a section each, with their label above and a copy button beside it.
+  const facts = entries.filter(([, item]) => isShortScalar(item));
+  const sections = entries.filter(([, item]) => !isShortScalar(item));
   return (
-    <dl className="space-y-4">
-      {entries.map(([key, item]) => {
-        const field = asSchema(asSchema(schema.properties)[key]);
+    <div className="min-w-0 space-y-5">
+      {facts.length > 0 && (
+        <dl className="grid min-w-0 grid-cols-[minmax(4rem,38%)_minmax(0,1fr)] gap-x-4 gap-y-2 rounded-lg bg-muted/40 px-3 py-2.5">
+          {facts.map(([key, item]) => (
+            <div key={key} className="contents">
+              <dt className="line-clamp-2 break-words text-caption leading-5 text-muted-foreground">
+                {fieldLabel(key, asSchema(properties[key]), labels)}
+              </dt>
+              <dd className="min-w-0 break-words text-body tabular-nums">
+                {String(item)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {sections.map(([key, item]) => {
+        const field = asSchema(properties[key]);
         return (
-          <div key={key} className="grid min-w-0 gap-1.5">
-            <dt className="break-words text-caption font-medium text-muted-foreground">
-              {fieldLabel(key, field, labels)}
-            </dt>
-            <dd className="min-w-0">
-              <GraphValueView value={item} schema={field} depth={depth + 1} />
-            </dd>
-          </div>
+          <section key={key} className="group/field min-w-0">
+            <div className="mb-1.5 flex items-center gap-2">
+              <h4
+                className={cn(
+                  "min-w-0 flex-1 break-words font-medium",
+                  depth === 0
+                    ? "text-body text-foreground"
+                    : "text-caption text-muted-foreground",
+                )}
+              >
+                {fieldLabel(key, field, labels)}
+              </h4>
+              <CopyValueButton
+                value={item}
+                className="invisible group-hover/field:visible focus-visible:visible"
+              />
+            </div>
+            <GraphValueView value={item} schema={field} depth={depth + 1} />
+          </section>
         );
       })}
-    </dl>
+    </div>
   );
 }
 

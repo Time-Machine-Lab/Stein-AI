@@ -236,6 +236,8 @@ export interface GraphRun {
   id: string;
   workspaceId: string;
   rootIssueId: string;
+  /** Title of the parent issue when the run started. */
+  rootTitle?: string;
   versionId: string;
   initiatorId: string;
   state: string;

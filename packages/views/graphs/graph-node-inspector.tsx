@@ -23,7 +23,7 @@ import {
   GraphConditionEditor,
 } from "./graph-bindings";
 import { GraphSchemaBuilder } from "./graph-schema-fields";
-import { useGraphNodeLabels } from "./graph-canvas";
+import { useGraphNodeLabels } from "./graph-node-catalog";
 
 export function GraphNodeInspector({
   definition,
@@ -73,11 +73,13 @@ export function GraphNodeInspector({
     node.approval?.approverIds ?? (node.approverId ? [node.approverId] : []);
   const approval = node.approval ?? { approverIds, mode: "all" };
   return (
-    <section className="min-w-0 overflow-hidden rounded-xl border bg-card">
-      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h2 className="text-body font-semibold">
-          {labels[node.type] ?? node.type}
-        </h2>
+    // Rendered inside the studio drawer, whose header already names the step,
+    // so this is flush content with the delete action on the first row.
+    <section
+      className="min-w-0"
+      aria-label={labels[node.type] ?? node.type}
+    >
+      <div className="flex items-center justify-end gap-2">
         {!["start", "end"].includes(node.type) && (
           <Button
             type="button"
@@ -115,7 +117,7 @@ export function GraphNodeInspector({
           </Button>
         )}
       </div>
-      <fieldset disabled={disabled} className="space-y-5 p-4">
+      <fieldset disabled={disabled} className="space-y-5">
         <Field label={t(($) => $.production.node_name)}>
           {(id) => (
             <Input
