@@ -489,8 +489,12 @@ jobs:
       group: stein-ai-production
       cancel-in-progress: false
     env:
-      DEPLOY_DIR: /srv/stein-ai
-      EXPECTED_HOST_FINGERPRINT: SHA256:jmzl6o5sZWlfwF2Ncg6hrEf7lluI0iDfp7t1W2MJwRk
+      # Production runs on the K3s cluster (k3s.seasonschange.cn), namespace stein-ai,
+      # Helm release "multica". KUBE_CONFIG is a kubeconfig for the namespace-scoped
+      # ServiceAccount stein-ai/ci-deployer; it cannot touch other namespaces.
+      NAMESPACE: stein-ai
+      RELEASE: multica
+      PUBLIC_URL: https://steinai.tmlab.top
       BACKEND_IMAGE: docker.io/${{ secrets.DOCKER_USERNAME }}/multica-backend
       WEB_IMAGE: docker.io/${{ secrets.DOCKER_USERNAME }}/multica-web
     steps:
@@ -510,102 +514,62 @@ jobs:
             exit 1
           fi
 
-      - name: Install SSH client dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y sshpass
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
 
-      - name: Pin production SSH host key
+      - name: Configure cluster access
         shell: bash
         env:
-          SERVER_IP: ${{ secrets.SERVER_IP }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_PWD: ${{ secrets.SERVER_PWD }}
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
         run: |
           set -Eeuo pipefail
-          [[ -n "$SERVER_IP" && -n "$SERVER_USER" && -n "$SERVER_PWD" ]] || {
-            echo "::error::SERVER_IP, SERVER_USER, and SERVER_PWD are required."
-            exit 1
-          }
-          [[ "$SERVER_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
-            echo "::error::SERVER_IP must be an IPv4 address."
-            exit 1
-          }
-          IFS=. read -r -a address_parts <<< "$SERVER_IP"
-          for part in "${address_parts[@]}"; do
-            if ((10#$part > 255)); then
-              echo "::error::SERVER_IP contains an invalid IPv4 octet."
-              exit 1
-            fi
-          done
-          [[ "$SERVER_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || {
-            echo "::error::SERVER_USER contains unsupported characters."
-            exit 1
-          }
+          [[ -n "$KUBE_CONFIG" ]] || { echo "::error::Repository secret KUBE_CONFIG is required."; exit 1; }
+          install -m 0700 -d "$HOME/.kube"
+          printf '%s\n' "$KUBE_CONFIG" > "$HOME/.kube/config"
+          chmod 0600 "$HOME/.kube/config"
+          kubectl -n "$NAMESPACE" get deployment "$RELEASE-backend" "$RELEASE-frontend"
 
-          install -d -m 0700 "$HOME/.ssh"
-          scan_file=$(mktemp)
-          trap 'rm -f -- "$scan_file"' EXIT
-          ssh-keyscan -T 10 -t ed25519 "$SERVER_IP" >"$scan_file"
-          actual_fingerprint=$(ssh-keygen -lf "$scan_file" -E sha256 | awk 'NR == 1 { print $2 }')
-          if [[ "$actual_fingerprint" != "$EXPECTED_HOST_FINGERPRINT" ]]; then
-            echo "::error::Production SSH host fingerprint did not match the pinned value."
-            exit 1
-          fi
-          install -m 0600 "$scan_file" "$HOME/.ssh/known_hosts"
-
-      - name: Sync deployment files and deploy exact release
+      - name: Deploy release to K3s
         shell: bash
         env:
-          SERVER_IP: ${{ secrets.SERVER_IP }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SSHPASS: ${{ secrets.SERVER_PWD }}
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
           TAG_NAME: ${{ needs.verify.outputs.tag_name }}
         run: |
           set -Eeuo pipefail
-          [[ -n "$SERVER_IP" && -n "$SERVER_USER" && -n "$SSHPASS" ]]
-          [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]] || {
-            echo "::error::DOCKER_USERNAME and DOCKER_PASSWORD are required for production deployment."
-            exit 1
-          }
-          [[ "$SERVER_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
-          IFS=. read -r -a address_parts <<< "$SERVER_IP"
-          for part in "${address_parts[@]}"; do
-            ((10#$part <= 255))
-          done
-          [[ "$SERVER_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
-          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
-          [[ "$DOCKER_USERNAME" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || {
-            echo "::error::DOCKER_USERNAME is not a valid Docker Hub namespace."
-            exit 1
-          }
           [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          echo "Deploying $TAG_NAME (previous: $(helm -n "$NAMESPACE" get values "$RELEASE" -a -o json | jq -r '.images.backend.tag'))"
+          # The backend runs `migrate up` on start; the chart uses strategy Recreate.
+          # On failure: helm -n stein-ai rollback multica
+          if ! helm upgrade "$RELEASE" deploy/helm/multica \
+              --namespace "$NAMESPACE" \
+              -f deploy/k3s/values.yaml \
+              --set images.backend.repository="$BACKEND_IMAGE" \
+              --set images.backend.tag="$TAG_NAME" \
+              --set images.frontend.repository="$WEB_IMAGE" \
+              --set images.frontend.tag="$TAG_NAME" \
+              --wait --timeout 10m; then
+            kubectl -n "$NAMESPACE" get pods -o wide || true
+            kubectl -n "$NAMESPACE" logs "deployment/$RELEASE-backend" --tail=80 || true
+            echo "::error::Deployment of $TAG_NAME failed. Roll back with: helm -n $NAMESPACE rollback $RELEASE"
+            exit 1
+          fi
+          kubectl -n "$NAMESPACE" apply -f deploy/k3s/ingress.yaml
+          helm -n "$NAMESPACE" history "$RELEASE" --max 3
 
-          target="${SERVER_USER}@${SERVER_IP}"
-          suffix="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
-          remote_compose="${DEPLOY_DIR}/.docker-compose.selfhost.yml.${suffix}"
-          remote_script="${DEPLOY_DIR}/.deploy-selfhost.sh.${suffix}"
-          ssh_options=(
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
-            -o PasswordAuthentication=yes
-            -o PubkeyAuthentication=no
-            -o ConnectTimeout=15
-          )
-
-          sshpass -e ssh "${ssh_options[@]}" "$target" \
-            "install -d -m 0750 '$DEPLOY_DIR'"
-          sshpass -e scp "${ssh_options[@]}" docker-compose.selfhost.yml \
-            "$target:$remote_compose"
-          sshpass -e scp "${ssh_options[@]}" scripts/deploy-selfhost.sh \
-            "$target:$remote_script"
-          sshpass -e ssh "${ssh_options[@]}" "$target" \
-            "install -m 0644 '$remote_compose' '$DEPLOY_DIR/docker-compose.selfhost.yml' && install -m 0750 '$remote_script' '$DEPLOY_DIR/deploy-selfhost.sh' && rm -f -- '$remote_compose' '$remote_script'"
-
-          printf '%s\n' "$DOCKER_PASSWORD" | sshpass -e ssh "${ssh_options[@]}" "$target" \
-            "$DEPLOY_DIR/deploy-selfhost.sh" "$TAG_NAME" "$BACKEND_IMAGE" "$WEB_IMAGE" "$DOCKER_USERNAME"
+      - name: Check public endpoint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 12); do
+            if curl -fsS -o /dev/null "$PUBLIC_URL/api/config" && curl -fsS -o /dev/null "$PUBLIC_URL/"; then
+              echo "$PUBLIC_URL is healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$PUBLIC_URL did not become healthy after the deployment."
+          exit 1
 
   helm-chart:
     needs: [verify, docker-backend-merge, docker-web-merge]

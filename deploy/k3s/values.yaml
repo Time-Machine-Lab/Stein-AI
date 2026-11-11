@@ -1,0 +1,42 @@
+# Production values for the K3s cluster (namespace: stein-ai, release: multica).
+# Used by .github/workflows/release.yml (deploy-production). Image tags are set by CI
+# with --set; everything else lives here so the deployed config is versioned.
+#
+# Secrets are NOT stored here. The backend reads them from the pre-created
+# Secret `multica-secrets` (JWT_SECRET, DATABASE_URL, SMTP_*, ...).
+# The database is the shared CloudNativePG cluster `pg-main` in namespace `database`.
+existingSecret: multica-secrets
+images:
+  backend:  {repository: docker.io/tmllab/multica-backend, tag: v0.1.9}
+  frontend: {repository: docker.io/tmllab/multica-web, tag: v0.1.9}
+postgres:
+  external: {enabled: true}
+backend:
+  replicas: 1
+  uploads:
+    persistence: {enabled: true, size: 5Gi, storageClass: local-path}
+  config:
+    appEnv: production
+    appUrl: https://steinai.tmlab.top
+    frontendOrigin: https://steinai.tmlab.top
+    corsAllowedOrigins: https://steinai.tmlab.top
+    cookieDomain: ""
+    allowSignup: false
+    disableWorkspaceCreation: false
+    googleRedirectUri: https://steinai.tmlab.top/auth/callback
+    localUploadBaseUrl: ""
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {memory: 1Gi}
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions: [{key: role, operator: In, values: [legacy]}]
+frontend:
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 160Mi}
+    limits: {memory: 1Gi}
+ingress:
+  enabled: false

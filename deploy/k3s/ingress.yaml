@@ -1,0 +1,13 @@
+# Single public host: /ws goes straight to the backend, everything else to the frontend
+# (the frontend proxies /api to the backend via REMOTE_API_URL).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: steinai, namespace: stein-ai}
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: steinai.tmlab.top
+      http:
+        paths:
+          - {path: /ws, pathType: Prefix, backend: {service: {name: multica-backend, port: {number: 8080}}}}
+          - {path: /, pathType: Prefix, backend: {service: {name: multica-frontend, port: {number: 3000}}}}
