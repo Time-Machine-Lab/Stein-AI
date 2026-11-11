@@ -489,7 +489,7 @@ jobs:
       group: stein-ai-production
       cancel-in-progress: false
     env:
-      # Production runs on the K3s cluster (k3s.seasonschange.cn), namespace stein-ai,
+      # Production runs on the K3s cluster (k3s.tmlab.top), namespace stein-ai,
       # Helm release "multica". KUBE_CONFIG is a kubeconfig for the namespace-scoped
       # ServiceAccount stein-ai/ci-deployer; it cannot touch other namespaces.
       NAMESPACE: stein-ai
